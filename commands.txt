@@ -1,0 +1,65 @@
+1. Create a virtual environment (one-time setup)
+windows:
+python -m venv .venv
+
+mac:
+python3 -m venv .venv
+
+2. Activate the virtual environment
+
+Windows - PowerShell (most common in VS Code):
+.\.venv\Scripts\Activate.ps1
+
+Windows - Command Prompt (CMD):
+.\.venv\Scripts\activate.bat
+
+Windows - Git Bash:
+source .venv/Scripts/activate
+
+macOS / Linux:
+source .venv/bin/activate
+
+
+3. Install project dependencies
+pip install -r requirements.txt
+
+4. Verifying everything is working
+4.1 Check Python path:
+    windows:
+    where python  
+
+    macOS/Linux:
+    which python
+
+4.2 Check installed packages:
+    pip list
+
+
+
+
+git commands:
+git commit --amend --no-edit להוסיף משהו לcommit שהעלתי
+
+יצירת בראנץ' ומעבר אליו
+git checkout -b feature-name
+מעבר לבראנץ קיים 
+git checkout feature-name
+
+הוספת קבצים git add .
+יצירת קומיט git commit -m "message about the changes"
+
+דחיפה לבראנץ git push  (בפעם הראשונה של הבראנץ זה לא יעבוד וזה יכתוב הודעה של איזה פקודה מלאה צריך להריץ עם משהו כמו git push stream... פשוט להעתיק אותה ולשים בטרמינל וזה ידחוף את הקוד לבראנץ)
+
+כשמתחילים לעבוד על בראנץ קיים כדאי לא לעבוד על קוד ישן 
+git checkout main
+git pull
+git checkout feature-name
+git merge main
+
+אם יש קונפליקטים פותרים ואז עושים להם קומיט 
+
+מיזוג של הבראנצים אחרי שדחפנו נכנסים לגיטאהב ויופיע שם יצירה של 
+pull request
+ עושים אישור עם שם שנותן קצת מידע ואז נראה אותו תחת זה
+ ה pr 
+ בגיטהאב שלנו
