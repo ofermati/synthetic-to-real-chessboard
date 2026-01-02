@@ -1,6 +1,8 @@
 import cv2
 import numpy as np
 from pathlib import Path
+from typing import Optional
+
 
 def order_points(pts: np.ndarray) -> np.ndarray:
     """
@@ -18,7 +20,7 @@ def order_points(pts: np.ndarray) -> np.ndarray:
 
     return np.array([tl, tr, br, bl], dtype=np.float32)
 
-def find_board_quad(image_bgr: np.ndarray) -> np.ndarray | None:
+def find_board_quad(image_bgr: np.ndarray) -> Optional[np.ndarray]:
     """
     מנסה למצוא את הלוח בתמונה בתור קונטור גדול עם 4 פינות.
     מחזירה 4 נקודות (x,y) אם נמצא, אחרת None.
@@ -104,18 +106,51 @@ def process_folder(in_root: Path, out_root: Path, out_size: int = 800) -> None:
     print(f"\nDone. Success: {success}/{len(images)}")
 
 if __name__ == "__main__":
-    renders_base = Path(r"C:\Dl_project\renders")
-    processed_base = Path(r"C:\Dl_project\processed")
+    # =========================
+    # PROJECT ROOT (portable)
+    # =========================
+    PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-    # כל תיקייה בתוך renders (Game4, Game5, ...)
-    game_dirs = [d for d in renders_base.iterdir() if d.is_dir()]
-    print(f"Found {len(game_dirs)} game folders under {renders_base}")
+    # =========================
+    # INPUT / OUTPUT
+    # =========================
+    # לפני warp:
+    # temp_data/renders/game2, game4, ...
+    renders_base = PROJECT_ROOT / "temp_data" / "renders"
+
+    # אחרי warp:
+    # datasets/unpaired/game2, game4, ...
+    processed_base = PROJECT_ROOT / "datasets" / "unpaired"
+
+    print("PROJECT_ROOT:", PROJECT_ROOT)
+    print("INPUT renders_base:", renders_base)
+    print("OUTPUT processed_base:", processed_base)
+
+    if not renders_base.exists():
+        raise FileNotFoundError(f"Input folder not found: {renders_base}")
+
+    processed_base.mkdir(parents=True, exist_ok=True)
+
+    # =========================
+    # Iterate over games
+    # =========================
+    # game2, game4, game6, ...
+    game_dirs = [
+        d for d in renders_base.iterdir()
+        if d.is_dir() and d.name.lower().startswith("game")
+    ]
+
+    print(f"Found {len(game_dirs)} game folders")
 
     for game_dir in sorted(game_dirs):
         out_dir = processed_base / game_dir.name
-        print("\n" + "="*60)
-        print(f"PROCESSING GAME FOLDER: {game_dir}")
-        print(f"OUTPUT FOLDER:         {out_dir}")
-        print("="*60)
+
+        print("\n" + "=" * 60)
+        print(f"PROCESSING GAME: {game_dir.name}")
+        print(f"FROM: {game_dir}")
+        print(f"TO:   {out_dir}")
+        print("=" * 60)
 
         process_folder(game_dir, out_dir, out_size=800)
+
+
