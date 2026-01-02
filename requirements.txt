@@ -14,5 +14,7 @@ requests==2.32.3
 typing_extensions==4.14.1
 urllib3==2.4.0
 zstandard==0.23.0
-torch
-torchvision
+tqdm
+--extra-index-url https://download.pytorch.org/whl/cu121
+torch==2.1.2
+torchvision==0.16.2

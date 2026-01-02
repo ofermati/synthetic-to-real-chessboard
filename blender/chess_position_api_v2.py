@@ -323,13 +323,14 @@ def main():
     parser.add_argument('--samples', type=int, default=128)
     parser.add_argument('--view', type=str, default='black', choices=['white', 'black'],
                         help='Render from white or black perspective')
+    parser.add_argument('--output_dir', type=str, default="./renders", help='Output directory for renders')
     
     args = parser.parse_args(argv)
     
     global RES, SAMPLES, OUT_DIR
     RES = args.resolution
     SAMPLES = args.samples
-    OUT_DIR = "./renders"
+    OUT_DIR = args.output_dir
 
     #למחוק
     import os
