@@ -3,15 +3,18 @@ import torch
 from pathlib import Path
 from torchvision import transforms
 from PIL import Image
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parents[1]))
 from models.networks import NetConfig, build_generator
 from tqdm import tqdm  # progress bar
 
 # ===========================
 # CONFIG
 # ===========================
-INPUT_ROOT = Path("datasets/unpaired/renders_processed")           # Where blender output is
+INPUT_ROOT = Path("datasets/unpaired/synthetic")           # Where blender output is
 OUTPUT_ROOT = Path("outputs/cyclegan_processed") # Where processed images go
-CKPT_PATH = Path("outputs/cyclegan_run1/G_A2B_epoch50.pth")  # לשנות לפי מה שיש לך
+CKPT_PATH = Path("outputs/cyclegan_run1/G_S2R_epoch50.pth")  # לשנות לפי מה שיש לך
 IMAGE_SIZE = (256, 256)                # Resize before processing
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -74,8 +77,10 @@ def main():
     ])
 
     # 3. Find all PNG images recursively
-    print(f"📂 Scanning {INPUT_ROOT} for images...")
-    all_images = list(INPUT_ROOT.rglob("*.png"))
+    print(f"Scanning {INPUT_ROOT} for images...")
+    all_images = []
+    for ext in ("*.png", "*.jpg", "*.jpeg"):
+        all_images += list(INPUT_ROOT.rglob(ext))
     
     if not all_images:
         print("⚠️ No images found!")
