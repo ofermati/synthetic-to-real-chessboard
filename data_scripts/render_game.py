@@ -7,23 +7,62 @@ import shutil
 # =========================
 # PATHS
 # =========================
+import os
+import shutil
+from pathlib import Path
+
+def resolve_blender_exe(project_root: Path) -> str:
+    # 1) explicit env var (best for shared repo)
+    env = os.environ.get("BLENDER_EXE")
+    if env and Path(env).exists():
+        return env
+
+    # 2) blender in PATH
+    p = shutil.which("blender")
+    if p:
+        return p
+
+    # 3) common local installs (adjust list if you want)
+    candidates = [
+        Path.home() / "blender-3.6.5-linux-x64" / "blender",
+        Path.home() / "apps" / "blender-3.6.5-linux-x64" / "blender",
+        project_root / "blender_bin" / "blender",   # if you decide to commit/copy it here (usually not)
+    ]
+    for c in candidates:
+        if c.exists():
+            return str(c)
+
+    raise FileNotFoundError(
+        "Blender executable not found.\n"
+        "Fix options:\n"
+        "  (A) export BLENDER_EXE=/full/path/to/blender\n"
+        "  (B) add blender folder to PATH\n"
+        "Tried: " + ", ".join(str(x) for x in candidates)
+    )
+
 
 # Determine the project root relative to this script
 # script is in /scripts, so parent is root
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-BLENDER_EXE = "/home/ordadu/blender-3.6.5-linux-x64/blender"
+BLENDER_EXE = resolve_blender_exe(PROJECT_ROOT)
 BLEND_FILE  = str(PROJECT_ROOT / "blender" / "chess-set.blend")
 BLENDER_PY  = str(PROJECT_ROOT / "blender" / "chess_position_api_v2.py")
 
 # Folder that contains ALL Game*.csv files
-FENS_DIR    = PROJECT_ROOT / "fens"
+FENS_DIR = PROJECT_ROOT / "fens"
 
-# Base output folder; each CSV will create its own subfolder inside (Game4, Game5, ...)
-OUT_BASE    = PROJECT_ROOT / "renders"
+# Everything output goes under temp_data/
+TEMP_DATA_DIR = PROJECT_ROOT / "temp_data"
 
-# Temporary folder for Blender outputs before organization
-GLOBAL_RENDERS_DIR = PROJECT_ROOT / "temp_renders"
+# Final organized renders:
+# temp_data/renders/Game2/frame_000588/...
+OUT_BASE = TEMP_DATA_DIR / "renders"
+
+# Temporary Blender outputs:
+# temp_data/temp_renders/1_overhead.png וכו'
+GLOBAL_RENDERS_DIR = TEMP_DATA_DIR / "temp_renders"
+
 
 # =========================
 # RENDER PARAMS
@@ -33,7 +72,7 @@ RESOLUTION  = 1024
 SAMPLES     = 64
 
 # Set to None to render ALL rows in each CSV
-LIMIT       = 2  # example: 4 renders only first 4 rows per CSV
+LIMIT       = 3  # example: 4 renders only first 4 rows per CSV
 
 VIEWS = ["black", "white"]
 
@@ -151,6 +190,8 @@ def read_csv_rows(csv_path: Path):
     return rows
 
 def main():
+    print("Using BLENDER_EXE:", BLENDER_EXE)
+
     # sanity checks
     for p, label in [
         (BLENDER_EXE, "BLENDER_EXE"),
