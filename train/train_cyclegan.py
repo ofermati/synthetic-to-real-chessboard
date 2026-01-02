@@ -69,17 +69,15 @@ loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
 # ======================
 cfg = NetConfig()
 
-G_A2B = build_generator("resnet", cfg, n_blocks=9).to(DEVICE)
-G_B2A = build_generator("resnet", cfg, n_blocks=9).to(DEVICE)
+G_S2R = build_generator("resnet", cfg, n_blocks=9).to(DEVICE)
+G_R2S = build_generator("resnet", cfg, n_blocks=9).to(DEVICE)
 
-D_A = build_discriminator(3, cfg).to(DEVICE)
-D_B = build_discriminator(3, cfg).to(DEVICE)
-
-init_weights(G_A2B)
-init_weights(G_B2A)
-init_weights(D_A)
-init_weights(D_B)
-
+D_S = build_discriminator(3, cfg).to(DEVICE)
+D_R = build_discriminator(3, cfg).to(DEVICE)
+init_weights(G_S2R)
+init_weights(G_R2S)
+init_weights(D_S)
+init_weights(D_R)
 # ======================
 # Losses
 # ======================
@@ -95,8 +93,8 @@ opt_G = optim.Adam(
     lr=LR, betas=(0.5, 0.999)
 )
 
-opt_D_A = optim.Adam(D_A.parameters(), lr=LR, betas=(0.5, 0.999))
-opt_D_B = optim.Adam(D_B.parameters(), lr=LR, betas=(0.5, 0.999))
+opt_D_S = optim.Adam(D_S.parameters(), lr=LR, betas=(0.5, 0.999))
+opt_D_R = optim.Adam(D_R.parameters(), lr=LR, betas=(0.5, 0.999))
 
 # ======================
 # Training loop
@@ -113,15 +111,14 @@ for epoch in range(1, EPOCHS + 1):
         # ------------------
         opt_G.zero_grad()
 
-        fake_B = G_A2B(real_A)
-        fake_A = G_B2A(real_B)
+        fake_B = G_S2R(real_A)
+        fake_A = G_R2S(real_B)
 
-        loss_GAN_A2B = gan_loss(D_B(fake_B), True)
-        loss_GAN_B2A = gan_loss(D_A(fake_A), True)
+        loss_GAN_S2R = gan_loss(D_R(fake_B), True)
+        loss_GAN_R2S = gan_loss(D_S(fake_A), True)
 
-        rec_A = G_B2A(fake_B)
-        rec_B = G_A2B(fake_A)
-
+        rec_A = G_R2S(fake_B)
+        rec_B = G_S2R(fake_A)
         loss_cycle = cycle_loss(rec_A, real_A) + cycle_loss(rec_B, real_B)
 
         loss_G = loss_GAN_A2B + loss_GAN_B2A + 10 * loss_cycle
@@ -140,20 +137,20 @@ for epoch in range(1, EPOCHS + 1):
         opt_D_A.step()
 
         # ------------------
-        # Train D_B
+        # Train D_R
         # ------------------
-        opt_D_B.zero_grad()
-        loss_D_B = (
-            gan_loss(D_B(real_B), True) +
-            gan_loss(D_B(fake_B.detach()), False)
+        opt_D_R.zero_grad()
+        loss_D_R = (
+            gan_loss(D_R(real_B), True) +
+            gan_loss(D_R(fake_B.detach()), False)
         ) * 0.5
-        loss_D_B.backward()
-        opt_D_B.step()
+        loss_D_R.backward()
+        opt_D_R.step()
 
     # ======================
     # Save checkpoints
     # ======================
-    torch.save(G_A2B.state_dict(), OUT_DIR / f"G_A2B_epoch{epoch}.pth")
-    torch.save(G_B2A.state_dict(), OUT_DIR / f"G_B2A_epoch{epoch}.pth")
+    torch.save(G_S2R.state_dict(), OUT_DIR / f"G_S2R_epoch{epoch}.pth")
+    torch.save(G_R2S.state_dict(), OUT_DIR / f"G_R2S_epoch{epoch}.pth")
 
-print("✅ Training finished")
+print("Training finished")
