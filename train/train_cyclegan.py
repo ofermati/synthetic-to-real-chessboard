@@ -41,7 +41,7 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 class UnpairedImageDataset(Dataset):
     def __init__(self, synthetic_dir, real_dir, transform):
         self.synthetic = list(synthetic_dir.rglob("*.png"))
-        self.real = list(real_dir.rglob("*.png"))
+        self.real = list(real_dir.rglob("*.jpg"))
         self.transform = transform
 
     def __len__(self):
