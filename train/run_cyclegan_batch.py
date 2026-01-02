@@ -9,8 +9,9 @@ from tqdm import tqdm  # progress bar
 # ===========================
 # CONFIG
 # ===========================
-INPUT_ROOT = Path("renders")           # Where blender output is
-OUTPUT_ROOT = Path("renders_processed") # Where processed images go
+INPUT_ROOT = Path("datasets/unpaired/renders_processed")           # Where blender output is
+OUTPUT_ROOT = Path("outputs/cyclegan_processed") # Where processed images go
+CKPT_PATH = Path("outputs/cyclegan_run1/G_A2B_epoch50.pth")  # לשנות לפי מה שיש לך
 IMAGE_SIZE = (256, 256)                # Resize before processing
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -23,6 +24,10 @@ def load_cyclegan_model():
     model = build_generator("resnet", cfg_cycle, n_blocks=9)
     
     model.to(DEVICE)
+    state = torch.load(CKPT_PATH, map_location=DEVICE)
+    model.load_state_dict(state)    
+    print(f"✅ Loaded weights from {CKPT_PATH}")
+
     model.eval()  # Set to inference mode
     return model
 
