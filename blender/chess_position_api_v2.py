@@ -331,6 +331,15 @@ def main():
     SAMPLES = args.samples
     OUT_DIR = "./renders"
 
+    #למחוק
+    import os
+    print("=== DEBUG PATHS ===")
+    print("cwd:", os.getcwd())
+    print("OUT_DIR raw:", OUT_DIR)
+    print("OUT_DIR abs:", bpy.path.abspath(OUT_DIR))
+    print("===================")
+    #למחוק
+
     
     # Get board info
     board_info = get_board_info()
