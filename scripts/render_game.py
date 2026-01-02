@@ -8,18 +8,22 @@ import shutil
 # PATHS
 # =========================
 
-BLENDER_EXE = r"C:\Program Files\Blender Foundation\Blender 5.0\blender.exe"
-BLEND_FILE  = r"C:\Dl_project\blender\chess-set.blend"
-BLENDER_PY  = r"C:\Dl_project\blender\chess_position_api_v2.py"
+# Determine the project root relative to this script
+# script is in /scripts, so parent is root
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+BLENDER_EXE = "/home/ordadu/blender-3.6.5-linux-x64/blender"
+BLEND_FILE  = str(PROJECT_ROOT / "blender" / "chess-set.blend")
+BLENDER_PY  = str(PROJECT_ROOT / "blender" / "chess_position_api_v2.py")
 
 # Folder that contains ALL Game*.csv files
-FENS_DIR    = Path(r"C:\Dl_project\fens")
+FENS_DIR    = PROJECT_ROOT / "fens"
 
 # Base output folder; each CSV will create its own subfolder inside (Game4, Game5, ...)
-OUT_BASE    = Path(r"C:\Dl_project\renders")
+OUT_BASE    = PROJECT_ROOT / "renders"
 
-# Blender actually writes here on your machine
-GLOBAL_RENDERS_DIR = Path(r"C:\renders")
+# Temporary folder for Blender outputs before organization
+GLOBAL_RENDERS_DIR = PROJECT_ROOT / "temp_renders"
 
 # =========================
 # RENDER PARAMS
@@ -29,14 +33,14 @@ RESOLUTION  = 1024
 SAMPLES     = 64
 
 # Set to None to render ALL rows in each CSV
-LIMIT       = None  # example: 4 renders only first 4 rows per CSV
+LIMIT       = 2  # example: 4 renders only first 4 rows per CSV
 
 VIEWS = ["black", "white"]
 
 # =========================
 
 def clear_global_renders() -> None:
-    """Delete pngs from C:\renders so we don't mix runs."""
+    """Delete pngs from temporary render dir so we don't mix runs."""
     GLOBAL_RENDERS_DIR.mkdir(parents=True, exist_ok=True)
     for p in GLOBAL_RENDERS_DIR.glob("*.png"):
         try:
@@ -57,6 +61,7 @@ def run_blender_one_view(fen: str, view: str, workdir: Path) -> None:
         "--view", view,
         "--resolution", str(RESOLUTION),
         "--samples", str(SAMPLES),
+        "--output_dir", str(GLOBAL_RENDERS_DIR),
     ]
 
     res = subprocess.run(
@@ -84,7 +89,7 @@ def pick_existing(paths, label):
 
 def collect_from_global(sample_dir: Path, view: str) -> None:
     """
-    Collect Blender outputs from C:\renders and move into sample_dir with stable names.
+    Collect Blender outputs from temporary render dir and move into sample_dir with stable names.
     Lecturer output files:
       always: 1_overhead.png
       black:  2_west.png,  3_east.png
