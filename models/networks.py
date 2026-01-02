@@ -383,3 +383,60 @@ def build_generator(kind: Literal["resnet", "unet"], cfg: NetConfig, **kwargs) -
 
 def build_discriminator(in_channels: int, cfg: NetConfig, **kwargs) -> nn.Module:
     return PatchDiscriminator(in_channels=in_channels, norm=cfg.norm_d, **kwargs)
+
+
+if __name__ == "__main__":
+    print("="*50)
+    print("Testing Pix2Pix Networks...")
+    print("="*50)
+    # pix2pix configuration
+    cfg = NetConfig(img_channels=3, norm_g="batch", norm_d="batch", gan_mode="bce")
+    
+    print("Building Generator (U-Net)...")
+    G = build_generator("unet", cfg, num_downs=8)
+    
+    print("Building Discriminator...")
+    D = build_discriminator(6, cfg)  # concat(x, y) => 6 channels
+    
+    print("Initializing Weights...")
+    init_weights(G)
+    init_weights(D)
+    
+    print("Initializing Loss...")
+    gan_loss = GANLoss(cfg.gan_mode)
+    
+    print("✅ Pix2Pix Success!")
+    
+    # Optional: Print parameter count
+    g_params = sum(p.numel() for p in G.parameters() if p.requires_grad)
+    d_params = sum(p.numel() for p in D.parameters() if p.requires_grad)
+    print(f"Generator Parameters: {g_params:,}")
+    print(f"Discriminator Parameters: {d_params:,}")
+    
+    print("\n" + "="*50)
+    print("Testing CycleGAN Networks...")
+    print("="*50)
+    
+    # CycleGAN configuration
+    cfg_cycle = NetConfig(img_channels=3, norm_g="instance", norm_d="instance", gan_mode="lsgan")
+    
+    print("Building Generators (ResNet)...")
+    G_XY = build_generator("resnet", cfg_cycle, n_blocks=9)
+    G_YX = build_generator("resnet", cfg_cycle, n_blocks=9)
+    
+    print("Building Discriminators...")
+    D_X  = build_discriminator(3, cfg_cycle)
+    D_Y  = build_discriminator(3, cfg_cycle)
+    
+    print("Initializing Weights...")
+    init_weights(G_XY); init_weights(G_YX); init_weights(D_X); init_weights(D_Y)
+    
+    print("Initializing Loss...")
+    cycle_gan_loss = GANLoss(cfg_cycle.gan_mode)
+    
+    print("✅ CycleGAN Success!")
+    
+    g_cycle_params = sum(p.numel() for p in G_XY.parameters() if p.requires_grad)
+    d_cycle_params = sum(p.numel() for p in D_X.parameters() if p.requires_grad)
+    print(f"Generator (each) Parameters: {g_cycle_params:,}")
+    print(f"Discriminator (each) Parameters: {d_cycle_params:,}")
