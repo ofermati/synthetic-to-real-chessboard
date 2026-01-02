@@ -63,3 +63,16 @@ pull request
  עושים אישור עם שם שנותן קצת מידע ואז נראה אותו תחת זה
  ה pr 
  בגיטהאב שלנו
+
+
+
+log in to claster:
+1. 
+ssh <BGU_USERNAME>@slurm.bgu.ac.il
+2.
+sinteractive --qos course --part gtx1080 --gpu 1 --time 0-08:00:00
+3. sign in from vs code to GPU node
+ctrl+shift+p
+Remote-SSH: Connect to Host...
+<BGU_USERNAME>@ise-pheno-07.auth.ad.bgu.ac.il
+log in wuth password
