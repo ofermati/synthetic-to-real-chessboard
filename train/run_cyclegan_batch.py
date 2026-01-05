@@ -14,7 +14,7 @@ from tqdm import tqdm  # progress bar
 # ===========================
 INPUT_ROOT = Path("datasets/unpaired/synthetic")           # Where blender output is
 OUTPUT_ROOT = Path("outputs/cyclegan_processed") # Where processed images go
-CKPT_PATH = Path("outputs/cyclegan_run1/G_S2R_epoch50.pth")  # לשנות לפי מה שיש לך
+CKPT_PATH = Path("outputs/cyclegan_run1/G_A2B_epoch9.pth")  # לשנות לפי מה שיש לך
 IMAGE_SIZE = (256, 256)                # Resize before processing
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 

@@ -1,38 +1,90 @@
 import csv
 import os
+import shutil
 import subprocess
 from pathlib import Path
-import shutil
 
 # =========================
-# PATHS
+# PATHS (Cluster-friendly)
 # =========================
-BLENDER_EXE = r"C:\Program Files\Blender Foundation\Blender 5.0\blender.exe"
-BLEND_FILE  = r"C:\Dl_project\blender\chess-set.blend"
-BLENDER_PY  = r"C:\Dl_project\blender\chess_position_api_v2.py"
 
-FENS_DIR    = Path(r"C:\Dl_project\fens")
-OUT_BASE    = Path(r"C:\Dl_project\renders_one")   # שמרתי בתיקייה חדשה כדי לא לדרוס
-GLOBAL_RENDERS_DIR = Path(r"C:\renders")
+def resolve_blender_exe(project_root: Path) -> str:
+    """
+    Finds Blender executable.
+    Priority:
+      1) BLENDER_EXE env var
+      2) blender in PATH
+      3) common local candidates
+    """
+    env = os.environ.get("BLENDER_EXE")
+    if env and Path(env).exists():
+        return env
+
+    p = shutil.which("blender")
+    if p:
+        return p
+
+    candidates = [
+        Path.home() / "blender-5.0.0-linux-x64" / "blender",
+        Path.home() / "blender-3.6.5-linux-x64" / "blender",
+        Path.home() / "apps" / "blender-3.6.5-linux-x64" / "blender",
+        project_root / "blender_bin" / "blender",
+    ]
+    for c in candidates:
+        if c.exists():
+            return str(c)
+
+    raise FileNotFoundError(
+        "Blender executable not found.\n"
+        "Fix options:\n"
+        "  (A) export BLENDER_EXE=/full/path/to/blender\n"
+        "  (B) add blender folder to PATH\n"
+        "Tried: " + ", ".join(str(x) for x in candidates)
+    )
+
+
+# project root = synthetic-to-real-chessboard
+PROJECT_ROOT = Path("/home/nitzandu/synthetic-to-real-chessboard")
+
+BLENDER_EXE = resolve_blender_exe(PROJECT_ROOT)
+BLEND_FILE  = str(PROJECT_ROOT / "blender" / "chess-set.blend")
+BLENDER_PY  = str(PROJECT_ROOT / "blender" / "chess_position_api_v2.py")
+
+# Input CSVs (absolute, as requested)
+FENS_DIR = Path("/home/nitzandu/synthetic-to-real-chessboard/fens")
+
+# Output paired dataset (we create only synthetic; you copy real manually)
+PAIRED_DIR = PROJECT_ROOT / "datasets" / "paired"
+OUT_SYN_BASE  = PAIRED_DIR / "synthetic"
+
+# Temporary Blender outputs (avoid mixing runs)
+# Temporary data root
+TEMP_DATA_DIR = PROJECT_ROOT / "temp_data"
+
+# Final output directory (NO synthetic subfolder)
+RENDERS_PAIRS_DIR = TEMP_DATA_DIR / "renders_pairs"
+
+# Temporary Blender outputs
+GLOBAL_RENDERS_DIR = TEMP_DATA_DIR / "temp_renders"
 
 # =========================
 # RENDER PARAMS
 # =========================
 RESOLUTION  = 1024
 SAMPLES     = 64
-LIMIT       = None  # None = הכל
+LIMIT       = None  # None = render all rows
 
 # =========================
-# בחירת זווית לכל משחק
-# view: "white" או "black"
-# angle: "overhead" או "2" או "3"
+# angle selection per game
+# view: "white" or "black"
+# angle: "overhead" / "2" / "3"
 # =========================
 GAME_VIEW_ANGLE = {
-    "Game2": ("white", "2"),
-    "Game4": ("white", "3"),
-    "Game5": ("white", "2"),
-    "Game6": ("white", "1"),  # overhead
-    "Game7": ("white", "3"),
+    "game2": ("white", "2"),
+    "game4": ("white", "3"),
+    "game5": ("white", "2"),
+    "game6": ("white", "overhead"),
+    "game7": ("white", "3"),
 }
 
 DEFAULT_VIEW_ANGLE = ("white", "2")
@@ -48,6 +100,11 @@ def clear_global_renders() -> None:
             pass
 
 def run_blender_one_view(fen: str, view: str, workdir: Path) -> None:
+    """
+    Calls your Blender python script once (for one FEN + one view).
+    That script usually writes multiple pngs (overhead + east/west).
+    We'll pick exactly ONE of them.
+    """
     cmd = [
         BLENDER_EXE,
         BLEND_FILE,
@@ -60,6 +117,7 @@ def run_blender_one_view(fen: str, view: str, workdir: Path) -> None:
         "--view", view,
         "--resolution", str(RESOLUTION),
         "--samples", str(SAMPLES),
+        "--output_dir", str(GLOBAL_RENDERS_DIR),
     ]
 
     res = subprocess.run(
@@ -85,54 +143,71 @@ def pick_existing(paths, label):
             return p
     raise FileNotFoundError(f"Missing {label}. Tried: {[str(x) for x in paths]}")
 
-def collect_one_from_global(sample_dir: Path, view: str, angle: str) -> None:
-    """
-    שומר רק תמונה אחת:
-    angle:
-      "overhead" -> 1_overhead.png
-      "2"        -> (2_west או 2_east) לפי מה שקיים
-      "3"        -> (3_east או 3_west) לפי מה שקיים
-    נשמר בשם: chosen.png
-    """
-    if angle == "overhead":
-        src = GLOBAL_RENDERS_DIR / "1_overhead.png"
-        if not src.exists():
-            raise FileNotFoundError(f"Missing 1_overhead.png in {GLOBAL_RENDERS_DIR}")
-
-    elif angle == "2":
-        src = pick_existing(
-            [GLOBAL_RENDERS_DIR / "2_west.png", GLOBAL_RENDERS_DIR / "2_east.png"],
-            "2_west.png or 2_east.png"
-        )
-
-    elif angle == "3":
-        src = pick_existing(
-            [GLOBAL_RENDERS_DIR / "3_east.png", GLOBAL_RENDERS_DIR / "3_west.png"],
-            "3_east.png or 3_west.png"
-        )
-    else:
-        raise ValueError(f"Invalid angle '{angle}'. Use: overhead / 2 / 3")
-
-    dst = sample_dir / "chosen.png"
-    if dst.exists():
-        dst.unlink()
-    shutil.move(str(src), str(dst))
-
-def is_done(sample_dir: Path) -> bool:
-    return (sample_dir / "chosen.png").exists()
+def read_csv_rows(csv_path: Path):
+    with open(csv_path, "r", encoding="utf-8") as f:
+        return list(csv.DictReader(f))
 
 def make_sample_id_from_to_frame(row: dict) -> str:
+    """
+    You said real frames are named like: frame_000200.jpg etc.
+    We'll use to_frame to generate same naming.
+    """
     to_frame = row.get("to_frame")
     if to_frame is None or str(to_frame).strip() == "":
         raise ValueError("Missing to_frame in CSV row")
     frame_num = int(str(to_frame).strip())
     return f"frame_{frame_num:06d}"
 
-def read_csv_rows(csv_path: Path):
-    with open(csv_path, "r", encoding="utf-8") as f:
-        return list(csv.DictReader(f))
+def choose_one_render_png(angle: str) -> Path:
+    """
+    Blender script output files commonly:
+      - 1_overhead.png always
+      - 2_west.png / 2_east.png
+      - 3_west.png / 3_east.png
+
+    We choose exactly ONE according to angle:
+      "overhead" -> 1_overhead.png
+      "2"        -> whichever exists: 2_west/2_east
+      "3"        -> whichever exists: 3_west/3_east
+    """
+    if angle == "overhead":
+        src = GLOBAL_RENDERS_DIR / "1_overhead.png"
+        if not src.exists():
+            raise FileNotFoundError(f"Missing 1_overhead.png in {GLOBAL_RENDERS_DIR}")
+        return src
+
+    if angle == "2":
+        return pick_existing(
+            [GLOBAL_RENDERS_DIR / "2_west.png", GLOBAL_RENDERS_DIR / "2_east.png"],
+            "2_west.png or 2_east.png"
+        )
+
+    if angle == "3":
+        return pick_existing(
+            [GLOBAL_RENDERS_DIR / "3_west.png", GLOBAL_RENDERS_DIR / "3_east.png"],
+            "3_west.png or 3_east.png"
+        )
+
+    raise ValueError(f"Invalid angle '{angle}'. Use: overhead / 2 / 3")
+
+def save_png_as_jpg(png_path: Path, jpg_path: Path) -> None:
+    """
+    Save output as JPG: frame_XXXXXX.jpg
+    Preferred: Pillow conversion.
+    If Pillow missing, fallback copies bytes (not ideal). We'll warn.
+    """
+    jpg_path.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        from PIL import Image  # pillow
+        img = Image.open(png_path).convert("RGB")
+        img.save(jpg_path, quality=95)
+    except Exception as e:
+        print(f"⚠️ Pillow convert failed ({e}). Copying PNG bytes into .jpg (not ideal).")
+        shutil.copy2(png_path, jpg_path)
 
 def main():
+    # sanity checks
     for p, label in [
         (BLENDER_EXE, "BLENDER_EXE"),
         (BLEND_FILE,  "BLEND_FILE"),
@@ -144,25 +219,28 @@ def main():
     if not FENS_DIR.exists():
         raise FileNotFoundError(f"FENS_DIR not found: {FENS_DIR}")
 
-    OUT_BASE.mkdir(parents=True, exist_ok=True)
+    RENDERS_PAIRS_DIR.mkdir(parents=True, exist_ok=True)
+    GLOBAL_RENDERS_DIR.mkdir(parents=True, exist_ok=True)
 
     csv_files = sorted(FENS_DIR.glob("*.csv"))
     if not csv_files:
         raise FileNotFoundError(f"No CSV files found in: {FENS_DIR}")
 
     print(f"Found {len(csv_files)} CSV files in {FENS_DIR}")
+    print(f"Output synthetic paired dataset: {OUT_SYN_BASE}")
+    print("NOTE: real images are NOT copied by this script (you will copy them manually).")
 
     for csv_path in csv_files:
-        game_name = csv_path.stem  # Game2 וכו'
+        game_name = csv_path.stem  # e.g. Game2
         view, angle = GAME_VIEW_ANGLE.get(game_name, DEFAULT_VIEW_ANGLE)
 
-        out_root = OUT_BASE / game_name
-        out_root.mkdir(parents=True, exist_ok=True)
+        out_syn_game = RENDERS_PAIRS_DIR / game_name
+        out_syn_game.mkdir(parents=True, exist_ok=True)
 
         print("\n" + "=" * 60)
         print(f"PROCESSING: {csv_path.name}")
         print(f"CHOICE: view={view}, angle={angle}")
-        print(f"OUTPUT DIR: {out_root}")
+        print(f"OUT SYN : {out_syn_game}")
         print("=" * 60)
 
         rows = read_csv_rows(csv_path)
@@ -185,24 +263,25 @@ def main():
                 print(f"❌ FAILED row {i}: {e}")
                 continue
 
-            sample_dir = out_root / sample_id
-            sample_dir.mkdir(parents=True, exist_ok=True)
+            dst_syn = out_syn_game / f"{sample_id}.jpg"
 
-            if is_done(sample_dir):
+            if dst_syn.exists():
                 skipped += 1
-                print(f"[{i}/{len(rows)}] SKIP (already done): {game_name}/{sample_id}")
+                print(f"[{i}/{len(rows)}] SKIP (exists): {game_name}/{sample_id}")
                 continue
-
-            print(f"[{i}/{len(rows)}] RENDER: {game_name}/{sample_id}")
 
             try:
                 clear_global_renders()
-                run_blender_one_view(fen, view, sample_dir)
-                collect_one_from_global(sample_dir, view, angle)
+                run_blender_one_view(fen, view, workdir=PROJECT_ROOT)
+
+                src_png = choose_one_render_png(angle)
+                save_png_as_jpg(src_png, dst_syn)
+
                 ok += 1
+                print(f"[{i}/{len(rows)}] OK: {game_name}/{sample_id}")
             except Exception as e:
                 failed += 1
-                print("❌ FAILED:", f"{game_name}/{sample_id}")
+                print(f"❌ FAILED: {game_name}/{sample_id}")
                 print(str(e)[:2000])
 
         print("\n---- GAME SUMMARY ----")

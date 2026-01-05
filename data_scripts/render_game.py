@@ -72,7 +72,7 @@ RESOLUTION  = 1024
 SAMPLES     = 64
 
 # Set to None to render ALL rows in each CSV
-LIMIT       = 3  # example: 4 renders only first 4 rows per CSV
+LIMIT       = None
 
 VIEWS = ["black", "white"]
 
