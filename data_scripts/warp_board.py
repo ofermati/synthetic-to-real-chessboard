@@ -120,7 +120,7 @@ if __name__ == "__main__":
 
     # אחרי warp:
     # datasets/unpaired/game2, game4, ...
-    processed_base = PROJECT_ROOT / "datasets" / "unpaired"
+    processed_base = PROJECT_ROOT / "datasets" / "unpaired" / "synthetic"
 
     print("PROJECT_ROOT:", PROJECT_ROOT)
     print("INPUT renders_base:", renders_base)
