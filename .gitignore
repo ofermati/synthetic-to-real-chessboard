@@ -4,5 +4,8 @@ __pycache__/
 *.pyc
 .DS_Store
 runs/
-datasets/unpaired/real/
+
+# local / heavy data (do not upload)
+datasets/
+temp_data/
 
