@@ -1,140 +1,221 @@
-# train_pix2pix.py
-from __future__ import annotations
-
-import argparse
 import os
-from pathlib import Path
-from typing import List, Tuple
-
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
-from torchvision import transforms
-from torchvision.utils import save_image, make_grid
+import torchvision.transforms as transforms
+import torchvision.transforms.functional as TF
+from torchvision.utils import save_image
 from PIL import Image
+import random
 
-from models.networks import NetConfig, build_generator, build_discriminator, GANLoss, init_weights
+# =========================
+# Config
+# =========================
+PROJECT_ROOT = "/home/nitzandu/synthetic-to-real-chessboard"
+SYN_DIR = f"{PROJECT_ROOT}/datasets/paired/synthetic"
+REAL_DIR = f"{PROJECT_ROOT}/datasets/paired/real"
+RUN_DIR = f"{PROJECT_ROOT}/outputs/pix2pix_run_improved"
+IMG_OUT_DIR = f"{RUN_DIR}/images"
+W_OUT_DIR = f"{RUN_DIR}/weights"
 
+BATCH_SIZE = 4
+EPOCHS = 100 # הגדלתי כי המשימה קשה יותר עם אוגמנטציה
+LR = 2e-4
+LAMBDA_L1 = 100
+IMG_SIZE = 256
 
-# -------------------------
-# Dataset
-# -------------------------
-IMG_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
+# =========================
+# Dataset עם אוגמנטציה זהה
+# =========================
+class PairedDataset(Dataset):
+    def __init__(self, syn_root, real_root, img_size=256):
+        self.samples = []
+        self.img_size = img_size
+        
+        # בניית רשימת זוגות
+        games = sorted(os.listdir(syn_root))
+        for game in games:
+            syn_game = os.path.join(syn_root, game)
+            real_game = os.path.join(real_root, game)
+            if os.path.isdir(syn_game) and os.path.isdir(real_game):
+                for fname in sorted(os.listdir(syn_game)):
+                    if os.path.exists(os.path.join(real_game, fname)):
+                        self.samples.append((os.path.join(syn_game, fname), os.path.join(real_game, fname)))
 
+    def __len__(self):
+        return len(self.samples)
 
-def list_images(folder: Path) -> List[Path]:
-    return sorted([p for p in folder.iterdir() if p.suffix.lower() in IMG_EXTS])
+    def __getitem__(self, idx):
+        syn_path, real_path = self.samples[idx]
+        syn = Image.open(syn_path).convert("RGB")
+        real = Image.open(real_path).convert("RGB")
 
+        # 1. Resize למעט יותר מהיעד
+        resize = transforms.Resize((self.img_size + 30, self.img_size + 30))
+        syn, real = resize(syn), resize(real)
 
-class PairedFolderDataset(Dataset):
-    """
-    Expects:
-      root/
-        A/   (inputs)
-        B/   (targets)
-    And filenames match between A and B.
-    """
-    def __init__(self, root: Path, size: int = 256):
-        self.root = root
-        self.A_dir = root / "A"
-        self.B_dir = root / "B"
-        assert self.A_dir.is_dir(), f"Missing folder: {self.A_dir}"
-        assert self.B_dir.is_dir(), f"Missing folder: {self.B_dir}"
+        # 2. Random Crop זהה
+        i, j, h, w = transforms.RandomCrop.get_params(syn, output_size=(self.img_size, self.img_size))
+        syn = TF.crop(syn, i, j, h, w)
+        real = TF.crop(real, i, j, h, w)
 
-        self.A_paths = list_images(self.A_dir)
-        assert len(self.A_paths) > 0, f"No images found in: {self.A_dir}"
+        # 3. Random Horizontal Flip זהה
+        if random.random() > 0.5:
+            syn = TF.hflip(syn)
+            real = TF.hflip(real)
 
-        self.size = size
-        self.tfm = transforms.Compose([
-            transforms.Resize((size, size)),
+        # 4. ToTensor & Normalize
+        tf = transforms.Compose([
             transforms.ToTensor(),
-            transforms.Normalize([0.5]*3, [0.5]*3),  # -> [-1, 1]
+            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
         ])
+        
+        return tf(syn), tf(real)
 
-    def __len__(self) -> int:
-        return len(self.A_paths)
+# =========================
+# Blocks
+# =========================
+class UNetBlockDown(nn.Module):
+    def __init__(self, in_c, out_c, use_norm=True):
+        super().__init__()
+        layers = [nn.Conv2d(in_c, out_c, 4, 2, 1, bias=False)]
+        if use_norm:
+            layers.append(nn.InstanceNorm2d(out_c)) # עדיף על BatchNorm ב-Pix2Pix
+        layers.append(nn.LeakyReLU(0.2, True))
+        self.net = nn.Sequential(*layers)
 
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor, str]:
-        a_path = self.A_paths[idx]
-        b_path = self.B_dir / a_path.name
-        if not b_path.exists():
-            raise FileNotFoundError(f"Missing matching target for {a_path.name} in {self.B_dir}")
+    def forward(self, x): return self.net(x)
 
-        a = Image.open(a_path).convert("RGB")
-        b = Image.open(b_path).convert("RGB")
-        x = self.tfm(a)
-        y = self.tfm(b)
-        return x, y, a_path.name
+class UNetBlockUp(nn.Module):
+    def __init__(self, in_c, out_c, use_dropout=False):
+        super().__init__()
+        layers = [
+            nn.ConvTranspose2d(in_c, out_c, 4, 2, 1, bias=False),
+            nn.InstanceNorm2d(out_c),
+            nn.ReLU(True)
+        ]
+        if use_dropout:
+            layers.append(nn.Dropout(0.5))
+        self.net = nn.Sequential(*layers)
 
+    def forward(self, x): return self.net(x)
 
-def load_single_pair(a_path: Path, b_path: Path, size: int) -> Tuple[torch.Tensor, torch.Tensor]:
-    tfm = transforms.Compose([
-        transforms.Resize((size, size)),
-        transforms.ToTensor(),
-        transforms.Normalize([0.5]*3, [0.5]*3),
-    ])
-    a = tfm(Image.open(a_path).convert("RGB")).unsqueeze(0)
-    b = tfm(Image.open(b_path).convert("RGB")).unsqueeze(0)
-    return a, b
+# =========================
+# Models
+# =========================
+class UNetGenerator(nn.Module):
+    def __init__(self):
+        super().__init__()
+        # Encoder (Downsampling)
+        self.d1 = UNetBlockDown(3, 64, use_norm=False) # 128
+        self.d2 = UNetBlockDown(64, 128)  # 64
+        self.d3 = UNetBlockDown(128, 256) # 32
+        self.d4 = UNetBlockDown(256, 512) # 16
+        self.d5 = UNetBlockDown(512, 512) # 8
+        self.d6 = UNetBlockDown(512, 512) # 4
+        self.d7 = UNetBlockDown(512, 512) # 2
 
+        # Decoder (Upsampling)
+        self.u1 = UNetBlockUp(512, 512, use_dropout=True) # 4
+        self.u2 = UNetBlockUp(1024, 512, use_dropout=True) # 8
+        self.u3 = UNetBlockUp(1024, 512, use_dropout=True) # 16
+        self.u4 = UNetBlockUp(1024, 256) # 32
+        self.u5 = UNetBlockUp(512, 128)  # 64
+        self.u6 = UNetBlockUp(256, 64)   # 128
 
-# -------------------------
-# Helpers
-# -------------------------
-@torch.no_grad()
-def save_triplet(x: torch.Tensor, y_fake: torch.Tensor, y: torch.Tensor, out_path: Path) -> None:
-    """
-    x, y_fake, y: [B,3,H,W] in [-1,1]
-    Saves a grid: input | output | target
-    """
-    # Denorm to [0,1]
-    def denorm(t): return (t * 0.5 + 0.5).clamp(0, 1)
+        self.out = nn.Sequential(
+            nn.ConvTranspose2d(128, 3, 4, 2, 1),
+            nn.Tanh()
+        )
 
-    # Use first sample
-    x0 = denorm(x[0])
-    yf0 = denorm(y_fake[0])
-    y0 = denorm(y[0])
+    def forward(self, x):
+        en1 = self.d1(x)
+        en2 = self.d2(en1)
+        en3 = self.d3(en2)
+        en4 = self.d4(en3)
+        en5 = self.d5(en4)
+        en6 = self.d6(en5)
+        en7 = self.d7(en6)
 
-    grid = make_grid(torch.stack([x0, yf0, y0], dim=0), nrow=3)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    save_image(grid, str(out_path))
+        de1 = self.u1(en7)
+        de2 = self.u2(torch.cat([de1, en6], 1))
+        de3 = self.u3(torch.cat([de2, en5], 1))
+        de4 = self.u4(torch.cat([de3, en4], 1))
+        de5 = self.u5(torch.cat([de4, en3], 1))
+        de6 = self.u6(torch.cat([de5, en2], 1))
+        
+        return self.out(torch.cat([de6, en1], 1))
 
+class PatchDiscriminator(nn.Module):
+    def __init__(self):
+        super().__init__()
+        def block(in_c, out_c, stride=2):
+            return nn.Sequential(
+                nn.Conv2d(in_c, out_c, 4, stride, 1, bias=False),
+                nn.InstanceNorm2d(out_c),
+                nn.LeakyReLU(0.2, True)
+            )
+        self.net = nn.Sequential(
+            nn.Conv2d(6, 64, 4, 2, 1),
+            nn.LeakyReLU(0.2, True),
+            block(64, 128),
+            block(128, 256),
+            block(256, 512, stride=1),
+            nn.Conv2d(512, 1, 4, 1, 1)
+        )
 
-def ensure_dir(p: Path) -> None:
-    p.mkdir(parents=True, exist_ok=True)
+    def forward(self, syn, tgt):
+        return self.net(torch.cat([syn, tgt], dim=1))
 
-
-# -------------------------
-# Train
-# -------------------------
-def train(args: argparse.Namespace) -> None:
+# =========================
+# Train Loop
+# =========================
+def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"device: {device}")
-    if device == "cuda":
-        print("cuda:", torch.cuda.get_device_name(0))
+    os.makedirs(IMG_OUT_DIR, exist_ok=True)
+    os.makedirs(W_OUT_DIR, exist_ok=True)
 
-    out_dir = Path(args.out_dir)
-    ensure_dir(out_dir)
+    loader = DataLoader(PairedDataset(SYN_DIR, REAL_DIR), batch_size=BATCH_SIZE, shuffle=True, num_workers=4)
 
-    # Pix2Pix typical: batch norms + BCE loss
-    cfg = NetConfig(img_channels=3, norm_g=args.norm_g, norm_d=args.norm_d, gan_mode=args.gan_mode)
-    G = build_generator("unet", cfg, num_downs=args.unet_downs).to(device)
-    D = build_discriminator(6, cfg).to(device)  # concat(x, y) => 6 channels
+    G = UNetGenerator().to(device)
+    D = PatchDiscriminator().to(device)
+    opt_G = torch.optim.Adam(G.parameters(), lr=LR, betas=(0.5, 0.999))
+    opt_D = torch.optim.Adam(D.parameters(), lr=LR, betas=(0.5, 0.999))
+    
+    criterion_GAN = nn.MSELoss()
+    criterion_L1 = nn.L1Loss()
 
-    init_weights(G)
-    init_weights(D)
+    for epoch in range(EPOCHS):
+        for i, (syn, real) in enumerate(loader):
+            syn, real = syn.to(device), real.to(device)
 
-    gan_loss = GANLoss(cfg.gan_mode).to(device)
-    l1_loss = nn.L1Loss()
+            # Train D
+            fake = G(syn).detach()
+            loss_D = (criterion_GAN(D(syn, real), torch.ones_like(D(syn, real))) + 
+                      criterion_GAN(D(syn, fake), torch.zeros_like(D(syn, fake)))) * 0.5
+            opt_D.zero_grad(); loss_D.backward(); opt_D.step()
 
-    optG = torch.optim.Adam(G.parameters(), lr=args.lr, betas=(0.5, 0.999))
-    optD = torch.optim.Adam(D.parameters(), lr=args.lr, betas=(0.5, 0.999))
+            # Train G
+            fake = G(syn)
+            loss_G_GAN = criterion_GAN(D(syn, fake), torch.ones_like(D(syn, fake)))
+            loss_G_L1 = criterion_L1(fake, real) * LAMBDA_L1
+            loss_G = loss_G_GAN + loss_G_L1
+            opt_G.zero_grad(); loss_G.backward(); opt_G.step()
 
-    # Data
-    if args.single:
-        assert args.a_img and args.b_img, "For --single you must pass --a_img and --b_img"
-        a_img = Path(args.a_img)
-        b_img = Path(args.b_img)
-        x_single, y_single = load_single_pair(a_img, b_img, args.size)
-        x_single = x_single.to(device)
-        y_single = y_single.to(device)
+            if i % 20 == 0:
+                print(f"E[{epoch}] Step[{i}/{len(loader)}] LossG: {loss_G.item():.3f} LossD: {loss_D.item():.3f}")
+
+        # Save Preview
+        with torch.no_grad():
+            G.eval()
+            test_syn, test_real = next(iter(loader))
+            test_fake = G(test_syn.to(device))
+            grid = torch.cat([test_syn[:2], test_fake.cpu()[:2], test_real[:2]], dim=0)
+            save_image(grid, f"{IMG_OUT_DIR}/epoch_{epoch}.png", nrow=2, normalize=True)
+            G.train()
+
+        if epoch % 10 == 0:
+            torch.save(G.state_dict(), f"{W_OUT_DIR}/G_{epoch}.pth")
+
+if __name__ == "__main__":
+    main()

@@ -1,32 +1,23 @@
 import cv2
 import numpy as np
 from pathlib import Path
-from typing import Optional, Tuple
-
+from typing import Optional
 
 # =========================
-# Core warp utils (based on your warp_board.py)
+# Core warp utils
 # =========================
 
 def order_points(pts: np.ndarray) -> np.ndarray:
-    """top-left, top-right, bottom-right, bottom-left"""
     pts = pts.astype(np.float32)
     s = pts.sum(axis=1)
     diff = np.diff(pts, axis=1)
-
     tl = pts[np.argmin(s)]
     br = pts[np.argmax(s)]
     tr = pts[np.argmin(diff)]
     bl = pts[np.argmax(diff)]
-
     return np.array([tl, tr, br, bl], dtype=np.float32)
 
-
 def find_board_quad(image_bgr: np.ndarray) -> Optional[np.ndarray]:
-    """
-    Find board as large 4-corner contour.
-    Returns 4 points (x,y) or None.
-    """
     gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
     gray = cv2.GaussianBlur(gray, (5, 5), 0)
 
@@ -42,7 +33,11 @@ def find_board_quad(image_bgr: np.ndarray) -> Optional[np.ndarray]:
 
     for cnt in contours[:10]:
         area = cv2.contourArea(cnt)
-        if area < 20000:
+
+        # במקום סף קבוע, סף יחסי לגודל התמונה (יותר יציב כשהלוח קטן)
+        H, W = gray.shape[:2]
+        min_area = 0.002 * H * W  # 0.2% מהתמונה (תשחקי: 0.001–0.01)
+        if area < min_area:
             continue
 
         peri = cv2.arcLength(cnt, True)
@@ -54,7 +49,6 @@ def find_board_quad(image_bgr: np.ndarray) -> Optional[np.ndarray]:
 
     return None
 
-
 def warp_to_square(image_bgr: np.ndarray, quad: np.ndarray, out_size: int = 800) -> np.ndarray:
     dst = np.array([
         [0, 0],
@@ -64,9 +58,7 @@ def warp_to_square(image_bgr: np.ndarray, quad: np.ndarray, out_size: int = 800)
     ], dtype=np.float32)
 
     M = cv2.getPerspectiveTransform(quad, dst)
-    warped = cv2.warpPerspective(image_bgr, M, (out_size, out_size))
-    return warped
-
+    return cv2.warpPerspective(image_bgr, M, (out_size, out_size))
 
 def process_one_image(in_path: Path, out_path: Path, out_size: int = 800) -> bool:
     img = cv2.imread(str(in_path))
@@ -80,158 +72,80 @@ def process_one_image(in_path: Path, out_path: Path, out_size: int = 800) -> boo
         return False
 
     warped = warp_to_square(img, quad, out_size=out_size)
-
     out_path.parent.mkdir(parents=True, exist_ok=True)
     ok = cv2.imwrite(str(out_path), warped)
     if not ok:
         print(f"❌ Failed saving: {out_path}")
     return ok
 
-
 # =========================
-# Pairing logic
+# Main: warp ONLY synthetic renders_pairs
 # =========================
 
 def to_game_capitalized(name: str) -> str:
-    """
-    Ensure 'game2' -> 'Game2', 'Game12' -> 'Game12'
-    If already 'Game2' keep as-is.
-    """
     s = name.strip()
-    if not s:
-        return s
     if s.lower().startswith("game"):
         return "Game" + s[4:]
     return s[0].upper() + s[1:]
 
-
-def find_real_game_dir(real_base: Path, game_cap: str) -> Optional[Path]:
-    """
-    Try to find real directory as:
-      real_base/Game2 OR real_base/game2
-    """
-    cand1 = real_base / game_cap
-    cand2 = real_base / game_cap.lower()
-    if cand1.exists():
-        return cand1
-    if cand2.exists():
-        return cand2
-    return None
-
-
 def main():
     PROJECT_ROOT = Path("/home/nitzandu/synthetic-to-real-chessboard")
 
-    # Input synthetic renders (warped into paired)
-    RENDERS_PAIRS = PROJECT_ROOT / "temp_data" / "renders_pairs"
+    IN_SYN = PROJECT_ROOT / "temp_data" / "renders_pairs"
+    OUT_SYN = PROJECT_ROOT / "datasets" / "paired" / "synthetic"
 
-    # Input real frames (already exist)
-    REAL_UNPAIRED = PROJECT_ROOT / "datasets" / "unpaired" / "real"
+    OUT_SIZE = 800
+    exts = {".png", ".jpg", ".jpeg"}
 
-    # Output paired
-    PAIRED_OUT = PROJECT_ROOT / "datasets" / "paired"
-    OUT_REAL = PAIRED_OUT / "real"
-    OUT_SYN  = PAIRED_OUT / "synthetic"
+    if not IN_SYN.exists():
+        raise FileNotFoundError(f"Missing input: {IN_SYN}")
 
-    OUT_SIZE = 800  # change if needed
-
-    if not RENDERS_PAIRS.exists():
-        raise FileNotFoundError(f"Missing input renders_pairs: {RENDERS_PAIRS}")
-    if not REAL_UNPAIRED.exists():
-        raise FileNotFoundError(f"Missing real unpaired folder: {REAL_UNPAIRED}")
-
-    OUT_REAL.mkdir(parents=True, exist_ok=True)
-    OUT_SYN.mkdir(parents=True, exist_ok=True)
-
-    # game2, game4, ...
-    game_dirs = [
-        d for d in RENDERS_PAIRS.iterdir()
-        if d.is_dir() and d.name.lower().startswith("game")
-    ]
+    game_dirs = [d for d in IN_SYN.iterdir() if d.is_dir() and d.name.lower().startswith("game")]
     if not game_dirs:
-        raise FileNotFoundError(f"No game folders under: {RENDERS_PAIRS}")
+        raise FileNotFoundError(f"No game folders under: {IN_SYN}")
 
-    print("PROJECT_ROOT:", PROJECT_ROOT)
-    print("INPUT synthetic renders_pairs:", RENDERS_PAIRS)
-    print("INPUT real unpaired:", REAL_UNPAIRED)
-    print("OUTPUT paired:", PAIRED_OUT)
+    print("INPUT:", IN_SYN)
+    print("OUTPUT:", OUT_SYN)
     print("OUT_SIZE:", OUT_SIZE)
     print(f"Found {len(game_dirs)} game folders")
 
-    exts = {".png", ".jpg", ".jpeg"}
+    total_ok = total_fail = total_skip = 0
 
     for syn_game_dir in sorted(game_dirs):
-        game_raw = syn_game_dir.name          # e.g. game2
-        game_cap = to_game_capitalized(game_raw)  # -> Game2
-
-        real_game_dir = find_real_game_dir(REAL_UNPAIRED, game_cap)
-        if real_game_dir is None:
-            print("\n" + "=" * 60)
-            print(f"⚠️ SKIP GAME (no matching real folder): {game_cap}")
-            print(f"Looked for: {REAL_UNPAIRED/game_cap} or {REAL_UNPAIRED/game_cap.lower()}")
-            print("=" * 60)
-            continue
-
-        out_real_game = OUT_REAL / game_cap
-        out_syn_game  = OUT_SYN  / game_cap
-        out_real_game.mkdir(parents=True, exist_ok=True)
-        out_syn_game.mkdir(parents=True, exist_ok=True)
+        game_cap = to_game_capitalized(syn_game_dir.name)
+        out_game = OUT_SYN / game_cap
+        out_game.mkdir(parents=True, exist_ok=True)
 
         syn_images = [p for p in syn_game_dir.iterdir() if p.is_file() and p.suffix.lower() in exts]
         syn_images.sort()
 
         print("\n" + "=" * 60)
-        print(f"PROCESSING GAME: {game_cap}")
-        print(f"SYN FROM: {syn_game_dir}")
-        print(f"REAL FROM:{real_game_dir}")
-        print(f"TO REAL:  {out_real_game}")
-        print(f"TO SYN:   {out_syn_game}")
-        print(f"Found {len(syn_images)} synthetic images")
+        print(f"GAME: {game_cap} | images: {len(syn_images)}")
         print("=" * 60)
 
-        ok = skipped = missing_real = failed = 0
-
+        ok = fail = skip = 0
         for i, syn_path in enumerate(syn_images, start=1):
-            frame_name = syn_path.name  # e.g. frame_000200.jpg
+            out_path = out_game / syn_path.name
 
-            real_path = real_game_dir / frame_name
-            if not real_path.exists():
-                missing_real += 1
-                print(f"[{i}/{len(syn_images)}] ⚠️ missing real: {game_cap}/{frame_name}")
+            if out_path.exists():
+                skip += 1
                 continue
 
-            out_syn_path  = out_syn_game / frame_name
-            out_real_path = out_real_game / frame_name
+            if process_one_image(syn_path, out_path, out_size=OUT_SIZE):
+                ok += 1
+                if ok % 50 == 0:
+                    print(f"✅ progress: {ok} saved in {game_cap}")
+            else:
+                fail += 1
+                print(f"[{i}/{len(syn_images)}] ❌ failed: {game_cap}/{syn_path.name}")
 
-            # skip if both exist already
-            if out_syn_path.exists() and out_real_path.exists():
-                skipped += 1
-                continue
-
-            try:
-                # warp both so they match size and remove borders
-                ok1 = process_one_image(syn_path, out_syn_path, out_size=OUT_SIZE)
-                ok2 = process_one_image(real_path, out_real_path, out_size=OUT_SIZE)
-
-                if ok1 and ok2:
-                    ok += 1
-                    if ok % 50 == 0:
-                        print(f"✅ progress: {ok} pairs done in {game_cap}")
-                else:
-                    failed += 1
-                    print(f"[{i}/{len(syn_images)}] ❌ failed pair: {game_cap}/{frame_name}")
-            except Exception as e:
-                failed += 1
-                print(f"[{i}/{len(syn_images)}] ❌ exception: {game_cap}/{frame_name} -> {e}")
-
-        print("\n---- GAME SUMMARY ----")
-        print("OK pairs:", ok)
-        print("SKIPPED (already existed):", skipped)
-        print("MISSING_REAL:", missing_real)
-        print("FAILED:", failed)
+        print(f"SUMMARY {game_cap}: OK={ok} SKIP={skip} FAIL={fail}")
+        total_ok += ok
+        total_fail += fail
+        total_skip += skip
 
     print("\nALL DONE.")
-
+    print(f"TOTAL: OK={total_ok} SKIP={total_skip} FAIL={total_fail}")
 
 if __name__ == "__main__":
     main()
