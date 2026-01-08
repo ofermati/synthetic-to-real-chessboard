@@ -10,8 +10,8 @@ import re
 # Paths
 # =========================
 INPUT_IMG_PATH = "/home/nitzandu/synthetic-to-real-chessboard/data_test/synthetic_from_fen.png"
-WEIGHTS_DIR = "/home/nitzandu/synthetic-to-real-chessboard/outputs/cut_run1/weights"
-OUTPUT_PATH = "/home/nitzandu/synthetic-to-real-chessboard/data_test/output_cut_result.png"
+WEIGHTS_DIR = "/home/nitzandu/synthetic-to-real-chessboard/outputs/cut_run1_fixed/weights"
+OUTPUT_PATH = "/home/nitzandu/synthetic-to-real-chessboard/data_test/output_cut_result_fixed.png"
 IMG_SIZE = 256
 
 # =========================

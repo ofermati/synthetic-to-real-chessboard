@@ -1,6 +1,5 @@
 import os
 import re
-import math
 import random
 from pathlib import Path
 from dataclasses import dataclass
@@ -19,6 +18,7 @@ from PIL import Image
 # 1) Datasets: recursive image loading
 # -----------------------------
 IMG_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+
 
 class RecursiveImageDataset(Dataset):
     def __init__(self, root_dir: str, transform=None):
@@ -194,7 +194,6 @@ class PatchSampleF(nn.Module):
         ).to(device)
         self.mlps[name] = mlp
 
-
     def forward(self, feats: Dict[str, torch.Tensor], n_patches: int, patch_ids=None):
         out = {}
         ids_out = {}
@@ -217,7 +216,6 @@ class PatchSampleF(nn.Module):
                 if name not in self.mlps:
                     self._make_mlp(name, C, device=f.device)
                 patches = self.mlps[name](patches)
-
 
             patches = F.normalize(patches, dim=1)
             out[name] = patches
@@ -244,36 +242,43 @@ class GANLossLS(nn.Module):
 
 
 # -----------------------------
-# 4) Train config + paths (Pix2pix-like outputs)
+# 4) Train config + paths
 # -----------------------------
 @dataclass
 class Config:
-    synthetic_root: str = "/home/nitzandu/synthetic-to-real-chessboard/datasets/unpaired/synthetic"
-    real_root: str      = "/home/nitzandu/synthetic-to-real-chessboard/datasets/unpaired/real"
+    synthetic_root: str = "/home/nitzandu/synthetic-to-real-chessboard/datasets/cut_8X8/synthetic"
+    real_root: str      = "/home/nitzandu/synthetic-to-real-chessboard/datasets/cut_8X8/real"
 
-    # main outputs root (as you requested)
     outputs_root: str   = "/home/nitzandu/synthetic-to-real-chessboard/outputs"
-    run_name: str       = "cut_run1"   # will create outputs/cut_run1/{images,weights}
+    run_name: str       = "cut_1_8X8"
 
     img_size: int       = 256
-    batch_size: int     = 1
+    batch_size: int     = 4
     num_workers: int    = 4
 
-    epochs: int         = 50
-    lr: float           = 2e-4
+    epochs: int         = 100
+    lr: float           = 1e-4
     beta1: float        = 0.5
     beta2: float        = 0.999
 
     nce_layers: Tuple[str, ...] = ("enc0", "enc1", "enc2", "res")
-    nce_weight: float   = 1.0
+    nce_weight: float   = 2.0
     nce_num_patches: int = 256
     nce_temperature: float = 0.07
 
+    # identity/self-regularization
+    use_identity: bool  = True
+    id_weight: float    = 1.0
+
+    # augmentation
+    use_color_jitter: bool = True
+    # NOTE: flip is off by default for stability
+    use_hflip: bool = False
+
     device: str         = "cuda" if torch.cuda.is_available() else "cpu"
 
-    # resume behavior:
-    resume: bool        = True         # if True, auto-resume from latest in weights/
-    resume_ckpt_path: str = ""          # optional: set explicit path to resume from
+    resume: bool        = True
+    resume_ckpt_path: str = ""
 
 
 def ensure_dir(p: Path):
@@ -290,9 +295,6 @@ def run_dirs(cfg: Config) -> Tuple[Path, Path]:
 
 
 def latest_checkpoint(weights_dir: Path) -> Optional[Path]:
-    """
-    Looks for files like epoch_001.pt, epoch_050.pt and returns the latest.
-    """
     pts = list(weights_dir.glob("epoch_*.pt"))
     if not pts:
         return None
@@ -306,7 +308,6 @@ def latest_checkpoint(weights_dir: Path) -> Optional[Path]:
 
 
 def save_samples(epoch: int, real_A, fake_B, real_B, images_dir: Path):
-    # Denorm from [-1,1] to [0,1]
     def to01(x): return (x * 0.5 + 0.5).clamp(0, 1)
     grid = torch.cat([to01(real_A), to01(fake_B), to01(real_B)], dim=0)  # A | G(A) | B
     save_image(grid, str(images_dir / f"epoch_{epoch:03d}.png"), nrow=3)
@@ -324,7 +325,6 @@ def save_ckpt(epoch: int, netG, netD, netF, optG, optD, optF, weights_dir: Path,
         "cfg": cfg.__dict__,
     }
     torch.save(ckpt, str(weights_dir / f"epoch_{epoch:03d}.pt"))
-    # convenience "latest"
     torch.save(ckpt, str(weights_dir / "latest.pt"))
 
 
@@ -351,13 +351,22 @@ def main():
     print(f"[INFO] Outputs:")
     print(f"  images : {images_dir}")
     print(f"  weights: {weights_dir}")
+    print(f"[INFO] device: {cfg.device}")
 
-    tfm = transforms.Compose([
-        transforms.Resize((cfg.img_size, cfg.img_size)),
-        transforms.RandomHorizontalFlip(p=0.5),
+    # transforms
+    tfm_list = [transforms.Resize((cfg.img_size, cfg.img_size))]
+
+    if cfg.use_color_jitter:
+        tfm_list.append(transforms.ColorJitter(brightness=0.15, contrast=0.15, saturation=0.10, hue=0.02))
+
+    if cfg.use_hflip:
+        tfm_list.append(transforms.RandomHorizontalFlip(p=0.5))
+
+    tfm_list += [
         transforms.ToTensor(),
-        transforms.Normalize((0.5,0.5,0.5), (0.5,0.5,0.5))
-    ])
+        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+    ]
+    tfm = transforms.Compose(tfm_list)
 
     A_ds = RecursiveImageDataset(cfg.synthetic_root, tfm)
     B_ds = RecursiveImageDataset(cfg.real_root, tfm)
@@ -382,8 +391,9 @@ def main():
     optF = None  # created after first forward (because MLPs are lazy)
 
     def compute_nce(real_A, fake_B):
-        _, feats_A = netG(real_A, return_feats=True)
-        _, feats_B = netG(fake_B, return_feats=True)
+        # ✅ IMPORTANT: encoder features only (no G(G(A))!)
+        feats_A = netG.encode_features(real_A)
+        feats_B = netG.encode_features(fake_B)
 
         feats_A = {k: feats_A[k] for k in cfg.nce_layers}
         feats_B = {k: feats_B[k] for k in cfg.nce_layers}
@@ -393,7 +403,7 @@ def main():
 
         total = 0.0
         for layer in cfg.nce_layers:
-            total = total + nce_loss_fn(q[layer], k[layer])
+            total = total + nce_loss_fn(q[layer], k[layer].detach())  # ✅ detach stabilizes
         return total / len(cfg.nce_layers)
 
     # -----------------------------------
@@ -405,20 +415,18 @@ def main():
         if cfg.resume_ckpt_path.strip():
             ckpt_path = Path(cfg.resume_ckpt_path.strip())
         else:
-            # prefer latest.pt if exists; else pick latest epoch_*.pt
             if (weights_dir / "latest.pt").exists():
                 ckpt_path = weights_dir / "latest.pt"
             else:
                 ckpt_path = latest_checkpoint(weights_dir)
 
         if ckpt_path is not None and ckpt_path.exists():
-            # need optF to exist and netF MLPs to exist before loading
-            # We'll do a dummy forward once to instantiate MLPs, then create optF, then load.
+            # instantiate netF mlps via dummy nce pass
             batch0 = next(iter(loader))
             real_A0 = batch0["A"].to(cfg.device)
             with torch.no_grad():
-                fake_B0, _ = netG(real_A0, return_feats=True)
-            _ = compute_nce(real_A0, fake_B0)  # instantiates netF mlps
+                fake_B0 = netG(real_A0)
+            _ = compute_nce(real_A0, fake_B0)  # creates mlps
             optF = torch.optim.Adam(netF.parameters(), lr=cfg.lr, betas=(cfg.beta1, cfg.beta2))
 
             start_epoch = load_ckpt(ckpt_path, netG, netD, netF, optG, optD, optF, cfg.device)
@@ -431,6 +439,7 @@ def main():
         running_g = 0.0
         running_d = 0.0
         running_nce = 0.0
+        running_id = 0.0
 
         for batch in loader:
             real_A = batch["A"].to(cfg.device, non_blocking=True)  # synthetic
@@ -458,7 +467,13 @@ def main():
             loss_G_gan = gan_loss(pred_fake_for_G, True)
 
             loss_G_nce = compute_nce(real_A, fake_B) * cfg.nce_weight
-            loss_G = loss_G_gan + loss_G_nce
+
+            loss_id = torch.tensor(0.0, device=cfg.device)
+            if cfg.use_identity:
+                id_B = netG(real_B)
+                loss_id = F.l1_loss(id_B, real_B) * cfg.id_weight
+
+            loss_G = loss_G_gan + loss_G_nce + loss_id
 
             if optF is None:
                 optF = torch.optim.Adam(netF.parameters(), lr=cfg.lr, betas=(cfg.beta1, cfg.beta2))
@@ -472,20 +487,22 @@ def main():
             running_g += loss_G.item()
             running_d += loss_D.item()
             running_nce += loss_G_nce.item()
+            running_id += loss_id.item()
             step += 1
 
             if step % 100 == 0:
                 print(f"[E{epoch:03d} step {step}] "
-                      f"D: {running_d/100:.4f} | G: {running_g/100:.4f} | NCE: {running_nce/100:.4f}")
-                running_g = running_d = running_nce = 0.0
+                      f"D: {running_d/100:.4f} | G: {running_g/100:.4f} | "
+                      f"NCE: {running_nce/100:.4f} | ID: {running_id/100:.4f}")
+                running_g = running_d = running_nce = running_id = 0.0
 
         # -----------------
         # Save sample + ckpt each epoch
         # -----------------
         netG.eval()
         with torch.no_grad():
-            fake_B = netG(real_A[:1])
-        save_samples(epoch, real_A[:1], fake_B[:1], real_B[:1], images_dir)
+            fake_B_vis = netG(real_A[:1])
+        save_samples(epoch, real_A[:1], fake_B_vis[:1], real_B[:1], images_dir)
 
         save_ckpt(epoch, netG, netD, netF, optG, optD, optF, weights_dir, cfg)
         print(f"[INFO] Saved: images/epoch_{epoch:03d}.png and weights/epoch_{epoch:03d}.pt")

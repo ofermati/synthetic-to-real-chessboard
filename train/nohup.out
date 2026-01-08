@@ -1,0 +1,21 @@
+[INFO] Outputs:
+  images : /home/nitzandu/synthetic-to-real-chessboard/outputs/cut_1_8X8/images
+  weights: /home/nitzandu/synthetic-to-real-chessboard/outputs/cut_1_8X8/weights
+[INFO] device: cuda
+[INFO] Found 100032 images under /home/nitzandu/synthetic-to-real-chessboard/datasets/cut_8X8/synthetic
+[INFO] Found 33088 images under /home/nitzandu/synthetic-to-real-chessboard/datasets/cut_8X8/real
+[INFO] No checkpoint found to resume from. Starting fresh.
+[E001 step 100] D: 0.2544 | G: 8.4853 | NCE: 7.7779 | ID: 0.2381
+Traceback (most recent call last):
+  File "/home/nitzandu/synthetic-to-real-chessboard/train/train_cut.py", line 519, in <module>
+    main()
+  File "/home/nitzandu/synthetic-to-real-chessboard/train/train_cut.py", line 471, in main
+    loss_id = torch.tensor(0.0, device=cfg.device)
+KeyboardInterrupt
+[INFO] Outputs:
+  images : /home/nitzandu/synthetic-to-real-chessboard/outputs/cut_1_8X8/images
+  weights: /home/nitzandu/synthetic-to-real-chessboard/outputs/cut_1_8X8/weights
+[INFO] device: cuda
+[INFO] Found 100032 images under /home/nitzandu/synthetic-to-real-chessboard/datasets/cut_8X8/synthetic
+[INFO] Found 33088 images under /home/nitzandu/synthetic-to-real-chessboard/datasets/cut_8X8/real
+[INFO] No checkpoint found to resume from. Starting fresh.
