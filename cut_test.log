@@ -1,5 +1,0 @@
-nohup: ignoring input
-Using device: cuda
-Loading weights from: /home/nitzandu/synthetic-to-real-chessboard/outputs/cut_run1/weights/epoch_004.pt
-Running inference...
-✅ Success! Saved result to: /home/nitzandu/synthetic-to-real-chessboard/data_test/output_cut_result.png

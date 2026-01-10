@@ -52,7 +52,7 @@ class UnpairedDataset(Dataset):
         self.B = B
 
     def __len__(self):
-        return max(len(self.A), len(self.B))
+        return min(len(self.A), len(self.B))
 
     def __getitem__(self, idx: int):
         a = self.A[idx % len(self.A)]
@@ -253,7 +253,7 @@ class Config:
     run_name: str       = "cut_1_8X8"
 
     img_size: int       = 256
-    batch_size: int     = 4
+    batch_size: int     = 1
     num_workers: int    = 4
 
     epochs: int         = 100
@@ -262,13 +262,13 @@ class Config:
     beta2: float        = 0.999
 
     nce_layers: Tuple[str, ...] = ("enc0", "enc1", "enc2", "res")
-    nce_weight: float   = 2.0
+    nce_weight: float   = 4.0
     nce_num_patches: int = 256
     nce_temperature: float = 0.07
 
     # identity/self-regularization
-    use_identity: bool  = True
-    id_weight: float    = 1.0
+    use_identity: bool  = False
+    id_weight: float    = 0.0
 
     # augmentation
     use_color_jitter: bool = True

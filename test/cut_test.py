@@ -9,9 +9,9 @@ import re
 # =========================
 # Paths
 # =========================
-INPUT_IMG_PATH = "/home/nitzandu/synthetic-to-real-chessboard/data_test/synthetic_from_fen.png"
-WEIGHTS_DIR = "/home/nitzandu/synthetic-to-real-chessboard/outputs/cut_run1_fixed/weights"
-OUTPUT_PATH = "/home/nitzandu/synthetic-to-real-chessboard/data_test/output_cut_result_fixed.png"
+INPUT_IMG_PATH = "/home/nitzandu/synthetic-to-real-chessboard/datasets/cut_8X8/synthetic/Game4/frame_640/G4_640_e_r6_c0.png"
+WEIGHTS_DIR = "/home/nitzandu/synthetic-to-real-chessboard/outputs/cut_1_8X8/weights"
+OUTPUT_PATH = "/home/nitzandu/synthetic-to-real-chessboard/data_test/output_cut_1_8X8_6.png"
 IMG_SIZE = 256
 
 # =========================
@@ -120,17 +120,30 @@ def main():
     
     netG.eval()
 
-    # Prep image
+    if not os.path.exists(INPUT_IMG_PATH):
+        raise FileNotFoundError(f"Image not found at {INPUT_IMG_PATH}")
+        
+    # === הלוגיקה החדשה לשמירה על רזולוציה ===
+    
+    # 1. טעינת התמונה המקורית
+    img = Image.open(INPUT_IMG_PATH).convert("RGB")
+    w, h = img.size
+    
+    # 2. חיתוך קל כדי שהמידות יתחלקו ב-4 (קריטי למודל)
+    new_w = w - (w % 4)
+    new_h = h - (h % 4)
+    
+    if new_w != w or new_h != h:
+        print(f"[INFO] Cropping image slightly to fit model: {w}x{h} -> {new_w}x{new_h}")
+        img = img.crop((0, 0, new_w, new_h))
+
+    # 3. הגדרת הטרנספורמציה (בלי Resize!)
     transform = transforms.Compose([
-        transforms.Resize((IMG_SIZE, IMG_SIZE)),
         transforms.ToTensor(),
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
     ])
 
-    if not os.path.exists(INPUT_IMG_PATH):
-        raise FileNotFoundError(f"Image not found at {INPUT_IMG_PATH}")
-        
-    img = Image.open(INPUT_IMG_PATH).convert("RGB")
+    # 4. יצירת הטנסור (השורה שהייתה חסרה לך)
     input_tensor = transform(img).unsqueeze(0).to(device)
 
     # Run
