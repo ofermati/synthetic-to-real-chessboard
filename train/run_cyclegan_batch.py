@@ -12,10 +12,12 @@ from tqdm import tqdm  # progress bar
 # ===========================
 # CONFIG
 # ===========================
-INPUT_ROOT = Path("datasets/unpaired/synthetic")           # Where blender output is
-OUTPUT_ROOT = Path("outputs/cyclegan_processed") # Where processed images go
-CKPT_PATH = Path("outputs/cyclegan_run1/G_A2B_epoch9.pth")  # לשנות לפי מה שיש לך
-IMAGE_SIZE = (256, 256)                # Resize before processing
+INPUT_ROOT  = Path("datasets/cut_8X8/synthetic/Game7/frame_17000") # Where blender output is
+OUTPUT_ROOT = Path("outputs/cyclegan_run1/infer_s2r_east") # Where processed images go
+
+CKPT_PATH = Path("outputs/cyclegan_run1/G_S2R_epoch21.pth") 
+
+IMAGE_SIZE = (152, 152)     # Resize before processing
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 def load_cyclegan_model():
@@ -23,7 +25,7 @@ def load_cyclegan_model():
     print(f"🔧 Building CycleGAN Generator (ResNet) on {DEVICE}...")
     
     # Same config as used in test_single_image.py for CycleGAN
-    cfg_cycle = NetConfig(img_channels=3, norm_g="instance", norm_d="instance", gan_mode="lsgan")
+    cfg_cycle = NetConfig()
     model = build_generator("resnet", cfg_cycle, n_blocks=9)
     
     model.to(DEVICE)
@@ -80,13 +82,19 @@ def main():
     print(f"Scanning {INPUT_ROOT} for images...")
     all_images = []
     for ext in ("*.png", "*.jpg", "*.jpeg"):
-        all_images += list(INPUT_ROOT.rglob(ext))
-    
+        all_images += list(INPUT_ROOT.glob(ext))
+
+    # --- FILTER: only east (_e_) ---
+    all_images = [p for p in all_images if "_e_" in p.name]   # מזרח
+    # all_images = [p for p in all_images if "_w_" in p.name] # מערב
+    # all_images = [p for p in all_images if "_o_" in p.name] # אופציה נוספת אצלך
+    # all_images = [p for p in all_images if "_r_" in p.name] # אופציה נוספת אצלך
+
     if not all_images:
-        print("⚠️ No images found!")
+        print("⚠️ No images found after filtering!")
         return
-        
-    print(f"found {len(all_images)} images. Starting processing...")
+
+    print(f"found {len(all_images)} east images. Starting processing...")
 
     # 4. Process Loop
     for img_path in tqdm(all_images):
