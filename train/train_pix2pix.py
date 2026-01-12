@@ -12,35 +12,53 @@ import random
 # Config
 # =========================
 PROJECT_ROOT = "/home/nitzandu/synthetic-to-real-chessboard"
-SYN_DIR = f"{PROJECT_ROOT}/datasets/paired/synthetic"
-REAL_DIR = f"{PROJECT_ROOT}/datasets/paired/real"
-RUN_DIR = f"{PROJECT_ROOT}/outputs/pix2pix_run_improved"
+SYN_DIR = f"{PROJECT_ROOT}/datasets/cut_8X8/synthetic"
+REAL_DIR = f"{PROJECT_ROOT}/datasets/cut_8X8/real"
+RUN_DIR = f"{PROJECT_ROOT}/outputs/pix2pix_cutPictures"
 IMG_OUT_DIR = f"{RUN_DIR}/images"
 W_OUT_DIR = f"{RUN_DIR}/weights"
 
 BATCH_SIZE = 4
-EPOCHS = 100 # הגדלתי כי המשימה קשה יותר עם אוגמנטציה
+EPOCHS = 100 
 LR = 2e-4
 LAMBDA_L1 = 100
 IMG_SIZE = 256
 
 # =========================
-# Dataset עם אוגמנטציה זהה
+# Dataset מעודכן למבנה של Game -> Frame -> Images
 # =========================
 class PairedDataset(Dataset):
     def __init__(self, syn_root, real_root, img_size=256):
         self.samples = []
         self.img_size = img_size
         
-        # בניית רשימת זוגות
+        # 1. רצים על התיקיות של המשחקים (Game1, Game2...)
         games = sorted(os.listdir(syn_root))
         for game in games:
-            syn_game = os.path.join(syn_root, game)
-            real_game = os.path.join(real_root, game)
-            if os.path.isdir(syn_game) and os.path.isdir(real_game):
-                for fname in sorted(os.listdir(syn_game)):
-                    if os.path.exists(os.path.join(real_game, fname)):
-                        self.samples.append((os.path.join(syn_game, fname), os.path.join(real_game, fname)))
+            syn_game_path = os.path.join(syn_root, game)
+            real_game_path = os.path.join(real_root, game)
+            
+            # מוודאים שתיקיית המשחק קיימת בשני המקומות
+            if os.path.isdir(syn_game_path) and os.path.isdir(real_game_path):
+                
+                # 2. רצים על תיקיות הפריימים (frame_0, frame_1...) בתוך המשחק
+                frames = sorted(os.listdir(syn_game_path))
+                for frame in frames:
+                    syn_frame_path = os.path.join(syn_game_path, frame)
+                    real_frame_path = os.path.join(real_game_path, frame)
+                    
+                    # מוודאים שתיקיית הפריים קיימת בשני המקומות
+                    if os.path.isdir(syn_frame_path) and os.path.isdir(real_frame_path):
+                        
+                        # 3. רצים על התמונות החתוכות בתוך הפריים
+                        images = sorted(os.listdir(syn_frame_path))
+                        for img_name in images:
+                            syn_img_final = os.path.join(syn_frame_path, img_name)
+                            real_img_final = os.path.join(real_frame_path, img_name)
+                            
+                            # מוודאים שקובץ התמונה האמיתי קיים ושזה אכן קובץ
+                            if os.path.isfile(syn_img_final) and os.path.isfile(real_img_final):
+                                self.samples.append((syn_img_final, real_img_final))
 
     def __len__(self):
         return len(self.samples)
@@ -50,16 +68,16 @@ class PairedDataset(Dataset):
         syn = Image.open(syn_path).convert("RGB")
         real = Image.open(real_path).convert("RGB")
 
-        # 1. Resize למעט יותר מהיעד
+        # 1. Resize
         resize = transforms.Resize((self.img_size + 30, self.img_size + 30))
         syn, real = resize(syn), resize(real)
 
-        # 2. Random Crop זהה
+        # 2. Random Crop
         i, j, h, w = transforms.RandomCrop.get_params(syn, output_size=(self.img_size, self.img_size))
         syn = TF.crop(syn, i, j, h, w)
         real = TF.crop(real, i, j, h, w)
 
-        # 3. Random Horizontal Flip זהה
+        # 3. Random Horizontal Flip
         if random.random() > 0.5:
             syn = TF.hflip(syn)
             real = TF.hflip(real)
@@ -80,7 +98,7 @@ class UNetBlockDown(nn.Module):
         super().__init__()
         layers = [nn.Conv2d(in_c, out_c, 4, 2, 1, bias=False)]
         if use_norm:
-            layers.append(nn.InstanceNorm2d(out_c)) # עדיף על BatchNorm ב-Pix2Pix
+            layers.append(nn.InstanceNorm2d(out_c))
         layers.append(nn.LeakyReLU(0.2, True))
         self.net = nn.Sequential(*layers)
 
@@ -106,22 +124,22 @@ class UNetBlockUp(nn.Module):
 class UNetGenerator(nn.Module):
     def __init__(self):
         super().__init__()
-        # Encoder (Downsampling)
-        self.d1 = UNetBlockDown(3, 64, use_norm=False) # 128
-        self.d2 = UNetBlockDown(64, 128)  # 64
-        self.d3 = UNetBlockDown(128, 256) # 32
-        self.d4 = UNetBlockDown(256, 512) # 16
-        self.d5 = UNetBlockDown(512, 512) # 8
-        self.d6 = UNetBlockDown(512, 512) # 4
-        self.d7 = UNetBlockDown(512, 512) # 2
+        # Encoder
+        self.d1 = UNetBlockDown(3, 64, use_norm=False)
+        self.d2 = UNetBlockDown(64, 128)
+        self.d3 = UNetBlockDown(128, 256)
+        self.d4 = UNetBlockDown(256, 512)
+        self.d5 = UNetBlockDown(512, 512)
+        self.d6 = UNetBlockDown(512, 512)
+        self.d7 = UNetBlockDown(512, 512)
 
-        # Decoder (Upsampling)
-        self.u1 = UNetBlockUp(512, 512, use_dropout=True) # 4
-        self.u2 = UNetBlockUp(1024, 512, use_dropout=True) # 8
-        self.u3 = UNetBlockUp(1024, 512, use_dropout=True) # 16
-        self.u4 = UNetBlockUp(1024, 256) # 32
-        self.u5 = UNetBlockUp(512, 128)  # 64
-        self.u6 = UNetBlockUp(256, 64)   # 128
+        # Decoder
+        self.u1 = UNetBlockUp(512, 512, use_dropout=True)
+        self.u2 = UNetBlockUp(1024, 512, use_dropout=True)
+        self.u3 = UNetBlockUp(1024, 512, use_dropout=True)
+        self.u4 = UNetBlockUp(1024, 256)
+        self.u5 = UNetBlockUp(512, 128)
+        self.u6 = UNetBlockUp(256, 64)
 
         self.out = nn.Sequential(
             nn.ConvTranspose2d(128, 3, 4, 2, 1),
@@ -175,7 +193,15 @@ def main():
     os.makedirs(IMG_OUT_DIR, exist_ok=True)
     os.makedirs(W_OUT_DIR, exist_ok=True)
 
-    loader = DataLoader(PairedDataset(SYN_DIR, REAL_DIR), batch_size=BATCH_SIZE, shuffle=True, num_workers=4)
+    print(f"Loading dataset from: {SYN_DIR}...")
+    dataset = PairedDataset(SYN_DIR, REAL_DIR)
+    print(f"--> Found {len(dataset)} paired images for training.")
+    
+    if len(dataset) == 0:
+        print("ERROR: No images found! Check paths.")
+        return
+
+    loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=4)
 
     G = UNetGenerator().to(device)
     D = PatchDiscriminator().to(device)

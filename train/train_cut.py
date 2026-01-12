@@ -262,13 +262,13 @@ class Config:
     beta2: float        = 0.999
 
     nce_layers: Tuple[str, ...] = ("enc0", "enc1", "enc2", "res")
-    nce_weight: float   = 4.0
+    nce_weight: float   = 2.0
     nce_num_patches: int = 256
     nce_temperature: float = 0.07
 
     # identity/self-regularization
-    use_identity: bool  = False
-    id_weight: float    = 0.0
+    use_identity: bool  = True
+    id_weight: float    = 0.5
 
     # augmentation
     use_color_jitter: bool = True
