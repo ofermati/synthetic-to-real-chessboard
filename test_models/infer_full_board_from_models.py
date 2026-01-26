@@ -10,8 +10,8 @@ from models.networks import NetConfig, build_generator
 # =========================
 # CONFIG - תשני רק כאן
 # =========================
-INPUT_IMAGE = Path("temp_data/zoomed/game7/frame_4952/2_west.png")
-WEIGHTS_PATH = Path("outputs/cyclegan_run1/G_S2R_epoch21.pth")
+INPUT_IMAGE = Path("temp_data/zoomed/game7/frame_4952/3_east.png")
+WEIGHTS_PATH = Path("outputs/cyclegan_run1/G_S2R_epoch50.pth")
 OUTPUT_IMAGE = Path("outputs/infer/board_full.png")
 
 BORDER_CUT = 0

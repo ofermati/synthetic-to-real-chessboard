@@ -1,5 +1,8 @@
 import itertools
 import sys
+import csv
+import time
+from datetime import datetime
 from pathlib import Path
 
 import torch
@@ -38,7 +41,50 @@ LR = 2e-4
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 RESUME = True
-RESUME_EPOCH = 8  # ימשיך מ-epoch 9
+RESUME_EPOCH = 39
+
+# ======================
+# Logging dirs/files
+# ======================
+LOGS_DIR = OUT_DIR / "logsFromTheStart"
+LOGS_DIR.mkdir(parents=True, exist_ok=True)
+
+LOSS_CSV = LOGS_DIR / "losses.csv"
+META_TXT = LOGS_DIR / "run_meta.txt"
+
+SAMPLES_DIR = OUT_DIR / "samples"
+SAMPLES_DIR.mkdir(parents=True, exist_ok=True)
+
+FIXED_DIR = OUT_DIR / "fixed_sample"
+FIXED_DIR.mkdir(parents=True, exist_ok=True)
+
+BEST_DIR = OUT_DIR / "best"
+BEST_DIR.mkdir(parents=True, exist_ok=True)
+
+# אם מתחילים ריצה חדשה (לא resume) - נכתוב CSV מחדש עם כותרות
+if not RESUME:
+    with open(LOSS_CSV, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            "timestamp", "epoch",
+            "loss_G", "loss_D_S", "loss_D_R",
+            "loss_GAN_S2R", "loss_GAN_R2S",
+            "loss_cycle", "loss_id"
+        ])
+
+# metadata למצגת
+if not META_TXT.exists():
+    with open(META_TXT, "w") as f:
+        f.write(f"run_started: {datetime.now().isoformat()}\n")
+        f.write(f"device: {DEVICE}\n")
+        f.write(f"batch_size: {BATCH_SIZE}\n")
+        f.write(f"epochs: {EPOCHS}\n")
+        f.write(f"lr: {LR}\n")
+        f.write(f"img_size: 152x152\n")
+        f.write(f"resume: {RESUME}\n")
+        f.write(f"resume_epoch: {RESUME_EPOCH}\n")
+        f.write(f"syn_dir: {SYN_DIR}\n")
+        f.write(f"real_dir: {REAL_DIR}\n")
 
 # ======================
 # Dataset
@@ -65,7 +111,7 @@ class UnpairedImageDataset(Dataset):
 transform = transforms.Compose([
     transforms.Resize((152, 152)),
     transforms.ToTensor(),
-    transforms.Normalize((0.5,)*3, (0.5,)*3),
+    transforms.Normalize((0.5,) * 3, (0.5,) * 3),
 ])
 
 dataset = UnpairedImageDataset(SYN_DIR, REAL_DIR, transform)
@@ -77,6 +123,7 @@ loader = DataLoader(
     pin_memory=True,
     persistent_workers=True
 )
+
 # ======================
 # Models
 # ======================
@@ -121,7 +168,6 @@ def load_epoch_weights(epoch: int) -> None:
     D_R.load_state_dict(torch.load(OUT_DIR / f"D_R_epoch{epoch}.pth", map_location=DEVICE))
 
 if RESUME:
-    # בדיקת קבצים כדי שלא ניפול באמצע
     needed = [
         OUT_DIR / f"G_S2R_epoch{RESUME_EPOCH}.pth",
         OUT_DIR / f"G_R2S_epoch{RESUME_EPOCH}.pth",
@@ -138,31 +184,43 @@ if RESUME:
 start_epoch = RESUME_EPOCH + 1 if RESUME else 1
 
 # ======================
-# Samples helpers
+# Helpers
 # ======================
 def denorm(x):
     return (x * 0.5 + 0.5).clamp(0, 1)
 
-SAMPLES_DIR = OUT_DIR / "samples"
-SAMPLES_DIR.mkdir(parents=True, exist_ok=True)
-
 fixed_sample = None
+best_loss_G = float("inf")
 
 # ======================
 # Training loop
 # ======================
 for epoch in range(start_epoch, EPOCHS + 1):
+    epoch_start = time.time()
+
+    sum_loss_G = 0.0
+    sum_loss_D_S = 0.0
+    sum_loss_D_R = 0.0
+    sum_loss_GAN_S2R = 0.0
+    sum_loss_GAN_R2S = 0.0
+    sum_loss_cycle = 0.0
+    sum_loss_id = 0.0
+    n_batches = 0
+
     loop = tqdm(loader, desc=f"Epoch {epoch}/{EPOCHS}")
 
     for real_S, real_R in loop:
-        real_S = real_S.to(DEVICE)
-        real_R = real_R.to(DEVICE)
+        real_S = real_S.to(DEVICE, non_blocking=True)
+        real_R = real_R.to(DEVICE, non_blocking=True)
 
         if fixed_sample is None:
             fixed_sample = (real_S[:1].detach().clone(), real_R[:1].detach().clone())
+            # save fixed inputs for presentation
+            save_image(denorm(fixed_sample[0].cpu()), FIXED_DIR / "fixed_S.png")
+            save_image(denorm(fixed_sample[1].cpu()), FIXED_DIR / "fixed_R.png")
 
         # ---- Train Generators ----
-        opt_G.zero_grad()
+        opt_G.zero_grad(set_to_none=True)
 
         fake_R = G_S2R(real_S)
         fake_S = G_R2S(real_R)
@@ -181,16 +239,53 @@ for epoch in range(start_epoch, EPOCHS + 1):
         opt_G.step()
 
         # ---- Train D_S ----
-        opt_D_S.zero_grad()
+        opt_D_S.zero_grad(set_to_none=True)
         loss_D_S = (gan_loss(D_S(real_S), True) + gan_loss(D_S(fake_S.detach()), False)) * 0.5
         loss_D_S.backward()
         opt_D_S.step()
 
         # ---- Train D_R ----
-        opt_D_R.zero_grad()
+        opt_D_R.zero_grad(set_to_none=True)
         loss_D_R = (gan_loss(D_R(real_R), True) + gan_loss(D_R(fake_R.detach()), False)) * 0.5
         loss_D_R.backward()
         opt_D_R.step()
+
+        # ---- Accumulate for epoch averages ----
+        n_batches += 1
+        sum_loss_G += loss_G.item()
+        sum_loss_D_S += loss_D_S.item()
+        sum_loss_D_R += loss_D_R.item()
+        sum_loss_GAN_S2R += loss_GAN_S2R.item()
+        sum_loss_GAN_R2S += loss_GAN_R2S.item()
+        sum_loss_cycle += loss_cycle.item()
+        sum_loss_id += loss_id.item()
+
+        loop.set_postfix({
+            "G": f"{loss_G.item():.3f}",
+            "D_S": f"{loss_D_S.item():.3f}",
+            "D_R": f"{loss_D_R.item():.3f}",
+            "cyc": f"{loss_cycle.item():.3f}",
+            "id": f"{loss_id.item():.3f}",
+        })
+
+    # ---- epoch averages ----
+    avg_loss_G = sum_loss_G / max(1, n_batches)
+    avg_loss_D_S = sum_loss_D_S / max(1, n_batches)
+    avg_loss_D_R = sum_loss_D_R / max(1, n_batches)
+    avg_loss_GAN_S2R = sum_loss_GAN_S2R / max(1, n_batches)
+    avg_loss_GAN_R2S = sum_loss_GAN_R2S / max(1, n_batches)
+    avg_loss_cycle = sum_loss_cycle / max(1, n_batches)
+    avg_loss_id = sum_loss_id / max(1, n_batches)
+
+    # ---- append CSV ----
+    with open(LOSS_CSV, "a", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            datetime.now().isoformat(), epoch,
+            avg_loss_G, avg_loss_D_S, avg_loss_D_R,
+            avg_loss_GAN_S2R, avg_loss_GAN_R2S,
+            avg_loss_cycle, avg_loss_id
+        ])
 
     # ======================
     # Save sample images
@@ -220,5 +315,25 @@ for epoch in range(start_epoch, EPOCHS + 1):
     torch.save(G_R2S.state_dict(), OUT_DIR / f"G_R2S_epoch{epoch}.pth")
     torch.save(D_S.state_dict(), OUT_DIR / f"D_S_epoch{epoch}.pth")
     torch.save(D_R.state_dict(), OUT_DIR / f"D_R_epoch{epoch}.pth")
+
+    # ======================
+    # Save best checkpoint
+    # ======================
+    if avg_loss_G < best_loss_G:
+        best_loss_G = avg_loss_G
+        torch.save(G_S2R.state_dict(), BEST_DIR / "G_S2R_best.pth")
+        torch.save(G_R2S.state_dict(), BEST_DIR / "G_R2S_best.pth")
+        torch.save(D_S.state_dict(), BEST_DIR / "D_S_best.pth")
+        torch.save(D_R.state_dict(), BEST_DIR / "D_R_best.pth")
+        with open(BEST_DIR / "best.txt", "w") as f:
+            f.write(f"best_epoch: {epoch}\n")
+            f.write(f"best_loss_G: {best_loss_G}\n")
+
+    epoch_time = time.time() - epoch_start
+    with open(META_TXT, "a") as f:
+        f.write(
+            f"epoch {epoch} time_sec: {epoch_time:.1f}, "
+            f"avg_loss_G: {avg_loss_G:.6f}, avg_loss_D_S: {avg_loss_D_S:.6f}, avg_loss_D_R: {avg_loss_D_R:.6f}\n"
+        )
 
 print("Training finished")
