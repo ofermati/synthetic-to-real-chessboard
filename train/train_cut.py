@@ -249,6 +249,10 @@ class GANLossLS(nn.Module):
 class Config:
     synthetic_root: str = "/home/nitzandu/synthetic-to-real-chessboard/datasets/cut_8X8/synthetic"
     real_root: str      = "/home/nitzandu/synthetic-to-real-chessboard/datasets/cut_8X8/real"
+    
+    # please change the paths for the data you download here
+    # synthetic_root: str = "/synthetic-to-real-chessboard/datasets/data_to_extra_train/synthetic"
+    # real_root: str      = "/synthetic-to-real-chessboard/datasets/data_to_extra_train/real"
 
     outputs_root: str   = "/home/nitzandu/synthetic-to-real-chessboard/outputs"
     run_name: str       = "cut_1_8X8_new"

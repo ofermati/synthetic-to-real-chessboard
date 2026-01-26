@@ -12,3 +12,5 @@ train: Includes the core source code used for training the model and optimizing 
 Execution Instructions:
 To run the model in inference mode, execute the final_run script using the following command:
 python final_run --fen "fen_string" --side “black” / “white”
+
+If you would like to train the model using the data from the modal, please place the dataset inside the data_to_extra_train directory. Then, update the data path in train/train_cut.py according to the navigation indicated in the comment inside the file.
