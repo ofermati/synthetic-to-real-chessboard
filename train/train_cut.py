@@ -1,6 +1,7 @@
 import os
 import re
 import random
+import csv  # <--- Added for CSV logging
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Dict, Tuple, Optional
@@ -250,11 +251,12 @@ class Config:
     real_root: str      = "/home/nitzandu/synthetic-to-real-chessboard/datasets/cut_8X8/real"
 
     outputs_root: str   = "/home/nitzandu/synthetic-to-real-chessboard/outputs"
-    run_name: str       = "cut_1_8X8"
+    run_name: str       = "cut_1_8X8_new"
+    loss_log_file: str  = "losses.csv"  # <--- Name of the log file
 
     img_size: int       = 256
     batch_size: int     = 1
-    num_workers: int    = 4
+    num_workers: int    = 0
 
     epochs: int         = 100
     lr: float           = 1e-4
@@ -272,7 +274,6 @@ class Config:
 
     # augmentation
     use_color_jitter: bool = True
-    # NOTE: flip is off by default for stability
     use_hflip: bool = False
 
     device: str         = "cuda" if torch.cuda.is_available() else "cpu"
@@ -342,15 +343,32 @@ def load_ckpt(path: Path, netG, netD, netF, optG, optD, optF, device: str) -> in
     return start_epoch
 
 
+def log_loss_to_csv(filepath: Path, epoch: int, loss_g: float, loss_d: float, loss_nce: float, loss_id: float):
+    """Logs the average losses of an epoch to a CSV file."""
+    file_exists = filepath.exists()
+    with open(filepath, mode='a', newline='') as f:
+        writer = csv.writer(f)
+        # Write header if file is new
+        if not file_exists:
+            writer.writerow(['epoch', 'loss_G', 'loss_D', 'loss_NCE', 'loss_ID'])
+        writer.writerow([epoch, loss_g, loss_d, loss_nce, loss_id])
+
+
 # -----------------------------
 # 5) Train loop
 # -----------------------------
 def main():
     cfg = Config()
     images_dir, weights_dir = run_dirs(cfg)
+    
+    # Path for CSV Log
+    run_dir = Path(cfg.outputs_root) / cfg.run_name
+    loss_csv_path = run_dir / cfg.loss_log_file
+
     print(f"[INFO] Outputs:")
     print(f"  images : {images_dir}")
     print(f"  weights: {weights_dir}")
+    print(f"  logs   : {loss_csv_path}")
     print(f"[INFO] device: {cfg.device}")
 
     # transforms
@@ -391,7 +409,7 @@ def main():
     optF = None  # created after first forward (because MLPs are lazy)
 
     def compute_nce(real_A, fake_B):
-        # ✅ IMPORTANT: encoder features only (no G(G(A))!)
+        # IMPORTANT: encoder features only (no G(G(A))!)
         feats_A = netG.encode_features(real_A)
         feats_B = netG.encode_features(fake_B)
 
@@ -403,7 +421,7 @@ def main():
 
         total = 0.0
         for layer in cfg.nce_layers:
-            total = total + nce_loss_fn(q[layer], k[layer].detach())  # ✅ detach stabilizes
+            total = total + nce_loss_fn(q[layer], k[layer].detach())  # detach stabilizes
         return total / len(cfg.nce_layers)
 
     # -----------------------------------
@@ -436,6 +454,14 @@ def main():
     step = 0
     for epoch in range(start_epoch, cfg.epochs + 1):
         netG.train(); netD.train(); netF.train()
+        
+        # --- Variables to accumulate loss for the epoch ---
+        epoch_loss_g = 0.0
+        epoch_loss_d = 0.0
+        epoch_loss_nce = 0.0
+        epoch_loss_id = 0.0
+        num_batches = 0
+        
         running_g = 0.0
         running_d = 0.0
         running_nce = 0.0
@@ -484,17 +510,36 @@ def main():
             optG.step()
             optF.step()
 
+            # --- Accumulate for printing ---
             running_g += loss_G.item()
             running_d += loss_D.item()
             running_nce += loss_G_nce.item()
             running_id += loss_id.item()
             step += 1
 
+            # --- Accumulate for CSV ---
+            epoch_loss_g += loss_G.item()
+            epoch_loss_d += loss_D.item()
+            epoch_loss_nce += loss_G_nce.item()
+            epoch_loss_id += loss_id.item()
+            num_batches += 1
+
             if step % 100 == 0:
                 print(f"[E{epoch:03d} step {step}] "
                       f"D: {running_d/100:.4f} | G: {running_g/100:.4f} | "
                       f"NCE: {running_nce/100:.4f} | ID: {running_id/100:.4f}")
                 running_g = running_d = running_nce = running_id = 0.0
+
+        # -----------------
+        # End of Epoch: Log to CSV
+        # -----------------
+        avg_g = epoch_loss_g / num_batches
+        avg_d = epoch_loss_d / num_batches
+        avg_nce = epoch_loss_nce / num_batches
+        avg_id = epoch_loss_id / num_batches
+        
+        log_loss_to_csv(loss_csv_path, epoch, avg_g, avg_d, avg_nce, avg_id)
+        print(f"[INFO] Logged epoch {epoch} losses to {loss_csv_path.name}")
 
         # -----------------
         # Save sample + ckpt each epoch

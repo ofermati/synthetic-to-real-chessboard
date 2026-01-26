@@ -10,7 +10,7 @@ import re
 # =========================
 INPUT_IMG_PATH = "/home/nitzandu/synthetic-to-real-chessboard/temp_data/zoomed/game5/frame_1444/2_west.png"
 WEIGHTS_DIR = "/home/nitzandu/synthetic-to-real-chessboard/outputs/cut_1_8X8/weights"
-OUTPUT_PATH = "/home/nitzandu/synthetic-to-real-chessboard/data_test/full_cpu_result.png"
+OUTPUT_PATH = "/home/nitzandu/synthetic-to-real-chessboard/data_test/full_cpu_result_2.png"
 
 TARGET_SIZE = 2048  # הגודל המקורי שאת רוצה
 BORDER_CUT = 0
