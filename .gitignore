@@ -8,6 +8,6 @@ runs/
 # local / heavy data (do not upload)
 datasets/
 temp_data/
-outputs/
-renders/
+junk/
 
+outputs/cut_1_8X8_new/weights

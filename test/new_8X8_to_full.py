@@ -4,16 +4,8 @@ from torchvision import transforms
 from PIL import Image
 from pathlib import Path
 import re
-
-# =========================
-# הגדרות
-# =========================
-INPUT_IMG_PATH = "/home/nitzandu/synthetic-to-real-chessboard/temp_data/zoomed/game5/frame_1444/2_west.png"
-WEIGHTS_DIR = "/home/nitzandu/synthetic-to-real-chessboard/outputs/cut_1_8X8/weights"
-OUTPUT_PATH = "/home/nitzandu/synthetic-to-real-chessboard/data_test/full_cpu_result_2.png"
-
-TARGET_SIZE = 2048  # הגודל המקורי שאת רוצה
-BORDER_CUT = 0
+import argparse  # <--- הוספנו את זה לקבלת ארגומנטים
+import sys
 
 # =========================
 # המודל (אותו אחד בדיוק)
@@ -48,35 +40,59 @@ class ResnetGenerator(nn.Module):
         return self.out(x)
 
 def find_latest_weights(weights_dir):
+    """
+    מוצא אוטומטית את קובץ המשקולות עם המספר הגבוה ביותר בתיקייה (למשל epoch_020.pt)
+    """
     weights = list(Path(weights_dir).glob("epoch_*.pt"))
-    if not weights: raise FileNotFoundError(f"No weights found in {weights_dir}")
+    if not weights: 
+        raise FileNotFoundError(f"No weights found in {weights_dir}")
+    # ממיין לפי המספר בשם הקובץ
     return str(max(weights, key=lambda p: int(re.search(r"epoch_(\d+)\.pt$", p.name).group(1))))
 
 def main():
-    # --- שינוי קריטי: מכריחים שימוש ב-CPU ---
-    # ה-CPU איטי יותר אבל יש לו המון זיכרון (RAM) בניגוד ל-GPU
-    device = "cpu" 
-    print(f"Using device: {device} (This might take 1-2 minutes, but guarantees consistency)")
-
-    # 1. טעינת מודל
-    weights_path = find_latest_weights(WEIGHTS_DIR)
-    netG = ResnetGenerator().to(device)
+    # --- הגדרת קבלת ארגומנטים משורת הפקודה ---
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input", required=True, help="Path to input zoomed image")
+    parser.add_argument("--weights_dir", required=True, help="Directory containing model weights")
+    parser.add_argument("--output", required=True, help="Path to save the result")
+    parser.add_argument("--target_size", type=int, default=2048, help="Resize target")
+    parser.add_argument("--border_cut", type=int, default=0, help="Optional crop")
     
-    # טעינת המשקולות ל-CPU
+    args = parser.parse_args()
+
+    # שימוש ב-CPU כדי למנוע בעיות זיכרון (כמו שביקשת)
+    device = "cpu" 
+    print(f"[INFO] Using device: {device}")
+
+    # 1. טעינת משקולות
+    # אנו משתמשים בפונקציה שמוצאת את המשקולות הכי עדכניות בתיקייה שקיבלנו
+    try:
+        weights_path = find_latest_weights(args.weights_dir)
+        print(f"[INFO] Loading weights from: {weights_path}")
+    except Exception as e:
+        print(f"[ERROR] Could not find weights: {e}")
+        sys.exit(1)
+
+    # טעינת המודל
+    netG = ResnetGenerator().to(device)
     ckpt = torch.load(weights_path, map_location=device)
     state_dict = ckpt['netG'] if 'netG' in ckpt else ckpt
     netG.load_state_dict(state_dict)
     netG.eval()
 
     # 2. הכנת תמונה
-    img = Image.open(INPUT_IMG_PATH).convert("RGB")
+    if not Path(args.input).exists():
+        print(f"[ERROR] Input file does not exist: {args.input}")
+        sys.exit(1)
+
+    img = Image.open(args.input).convert("RGB")
     w, h = img.size
     
-    if BORDER_CUT > 0:
-        img = img.crop((BORDER_CUT, BORDER_CUT, w - BORDER_CUT, h - BORDER_CUT))
+    if args.border_cut > 0:
+        img = img.crop((args.border_cut, args.border_cut, w - args.border_cut, h - args.border_cut))
 
-    # חשוב: Resize איכותי
-    img = img.resize((TARGET_SIZE, TARGET_SIZE), Image.BICUBIC)
+    # Resize
+    img = img.resize((args.target_size, args.target_size), Image.BICUBIC)
     print(f"[INFO] Processing full image size: {img.size}")
 
     transform = transforms.Compose([
@@ -86,7 +102,7 @@ def main():
     
     input_tensor = transform(img).unsqueeze(0).to(device)
 
-    # 3. הרצה (לוקח זמן!)
+    # 3. הרצה
     print("[INFO] Running inference on full image... please wait...")
     with torch.no_grad():
         output_tensor = netG(input_tensor)
@@ -96,8 +112,11 @@ def main():
     output_img = (output_img * 0.5 + 0.5).clamp(0, 1)
     final_pil = transforms.ToPILImage()(output_img)
     
-    final_pil.save(OUTPUT_PATH)
-    print(f"✅ Saved Full-Context Result to: {OUTPUT_PATH}")
+    # וידוא שתיקיית היעד קיימת
+    Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+    
+    final_pil.save(args.output)
+    print(f"✅ Saved Full-Context Result to: {args.output}")
 
 if __name__ == "__main__":
     main()
