@@ -8,5 +8,6 @@ runs/
 # local / heavy data (do not upload)
 datasets/
 temp_data/
-outputs/
+junk/
 
+outputs
